@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     if (!GOOGLE_API_KEY) {
 
         console.error(
-            "Missing GOOGLE_PLACES_API_KEY environment variable."
+            "BOKKARA PLACES ERROR: GOOGLE_PLACES_API_KEY is missing."
         );
 
 
@@ -69,7 +69,9 @@ export default async function handler(req, res) {
             success: false,
 
             error:
-                "Google Places API key is not configured."
+                "Google Places API key is not configured.",
+
+            places: []
 
         });
 
@@ -77,63 +79,92 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       READ QUERY PARAMETERS
+       READ PARAMETERS
     ====================================================== */
 
-    const {
-
-        query = "",
-
-        category = "food",
-
-        latitude,
-
-        longitude,
-
-        accuracy,
-
-        types
-
-    } = req.query;
+    const query =
+        typeof req.query.query === "string"
+            ? req.query.query.trim()
+            : "";
 
 
-    const cleanQuery =
-        String(query || "").trim();
+    const category =
+        typeof req.query.category === "string"
+            ? req.query.category.trim().toLowerCase()
+            : "food";
 
 
-    const cleanCategory =
-        String(category || "food")
-            .trim()
-            .toLowerCase();
+    const latitude =
+        req.query.latitude !== undefined
+            ? Number(req.query.latitude)
+            : null;
+
+
+    const longitude =
+        req.query.longitude !== undefined
+            ? Number(req.query.longitude)
+            : null;
+
+
+    const accuracy =
+        req.query.accuracy !== undefined
+            ? Number(req.query.accuracy)
+            : null;
 
 
     /* =====================================================
-       VALIDATE COORDINATES
+       VALIDATE LOCATION
     ====================================================== */
-
-    const lat =
-        latitude !== undefined
-            ? Number(latitude)
-            : null;
-
-
-    const lng =
-        longitude !== undefined
-            ? Number(longitude)
-            : null;
-
 
     const hasLocation =
-        Number.isFinite(lat) &&
-        Number.isFinite(lng) &&
-        lat >= -90 &&
-        lat <= 90 &&
-        lng >= -180 &&
-        lng <= 180;
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+
+
+    console.log(
+        "================================================="
+    );
+
+    console.log(
+        "BOKKARA PLACES REQUEST"
+    );
+
+    console.log(
+        "query:",
+        query
+    );
+
+    console.log(
+        "category:",
+        category
+    );
+
+    console.log(
+        "latitude:",
+        latitude
+    );
+
+    console.log(
+        "longitude:",
+        longitude
+    );
+
+    console.log(
+        "hasLocation:",
+        hasLocation
+    );
+
+    console.log(
+        "================================================="
+    );
 
 
     /* =====================================================
-       SEARCH TYPE DEFINITIONS
+       CATEGORY CONFIGURATION
     ====================================================== */
 
     const CATEGORY_TYPES = {
@@ -184,96 +215,14 @@ export default async function handler(req, res) {
     };
 
 
-    /* =====================================================
-       GET CATEGORY TYPES
-    ====================================================== */
-
-    let categoryTypes =
-        CATEGORY_TYPES[cleanCategory];
-
-
-    if (!Array.isArray(categoryTypes)) {
-
-        categoryTypes =
-            CATEGORY_TYPES.food;
-
-    }
+    const selectedTypes =
+        CATEGORY_TYPES[category] ||
+        CATEGORY_TYPES.food;
 
 
     /* =====================================================
-       FRONTEND TYPES
+       FIELD MASK
     ====================================================== */
-
-    let requestedTypes = [];
-
-
-    if (types) {
-
-        requestedTypes =
-            String(types)
-                .split(",")
-                .map(
-                    type =>
-                        type.trim()
-                )
-                .filter(Boolean);
-
-    }
-
-
-    /*
-     * Only allow Google place types that we have explicitly
-     * defined.
-     *
-     * This prevents the browser from sending arbitrary
-     * values directly into Google's API request.
-     */
-
-    const allowedTypes =
-        new Set(
-
-            Object.values(
-                CATEGORY_TYPES
-            ).flat()
-
-        );
-
-
-    requestedTypes =
-        requestedTypes.filter(
-            type =>
-                allowedTypes.has(type)
-        );
-
-
-    /*
-     * If the frontend didn't send valid types,
-     * fall back to the selected category.
-     */
-
-    if (
-        requestedTypes.length === 0
-    ) {
-
-        requestedTypes =
-            categoryTypes;
-
-    }
-
-
-    /* =====================================================
-       GOOGLE FIELD MASK
-    ====================================================== */
-
-    /*
-     * We intentionally request only the fields required by
-     * the Bokkara frontend.
-     *
-     * Google requires a field mask for Places API (New).
-     *
-     * Keeping this limited also avoids unnecessarily
-     * requesting more place data than we need.
-     */
 
     const FIELD_MASK = [
 
@@ -295,295 +244,63 @@ export default async function handler(req, res) {
 
         "places.primaryType",
 
-        "places.currentOpeningHours"
+        "places.currentOpeningHours",
+
+        "places.photos"
 
     ].join(",");
 
 
     /* =====================================================
-       GOOGLE API URLS
+       GOOGLE ENDPOINTS
     ====================================================== */
 
-    const GOOGLE_TEXT_SEARCH_URL =
+    const TEXT_SEARCH_URL =
         "https://places.googleapis.com/v1/places:searchText";
 
 
-    const GOOGLE_NEARBY_SEARCH_URL =
+    const NEARBY_SEARCH_URL =
         "https://places.googleapis.com/v1/places:searchNearby";
 
 
     /* =====================================================
-       CHOOSE SEARCH METHOD
+       GOOGLE REQUEST HELPER
     ====================================================== */
 
-    /*
-     * If the user typed a query:
-     *
-     *     "KFC"
-     *     "Maracas Beach"
-     *     "MovieTowne"
-     *     "restaurants"
-     *
-     * use Text Search.
-     *
-     *
-     * If there is no query:
-     *
-     *     category = food
-     *     latitude
-     *     longitude
-     *
-     * use Nearby Search.
-     */
-
-    const useTextSearch =
-        cleanQuery.length > 0;
-
-
-    let googleResponse;
-
-
-    /* =====================================================
-       TEXT SEARCH
-    ====================================================== */
-
-    if (useTextSearch) {
-
-        const textQuery =
-            cleanQuery;
-
-
-        const body = {
-
-            textQuery:
-
-                textQuery,
-
-            pageSize:
-
-                20
-
-        };
-
-
-        /*
-         * Add location bias when browser location
-         * is available.
-         *
-         * Google describes locationBias as a preference
-         * around a location rather than a strict boundary.
-         */
-
-        if (hasLocation) {
-
-            /*
-             * Use a reasonable search radius.
-             *
-             * This is a bias, not a hard restriction.
-             */
-
-            body.locationBias = {
-
-                circle: {
-
-                    center: {
-
-                        latitude: lat,
-
-                        longitude: lng
-
-                    },
-
-                    radius: 10000
-
-                }
-
-            };
-
-        }
-
-
-        /*
-         * For category searches, use Google's includedType
-         * when we can safely determine a single type.
-         *
-         * Text Search accepts one includedType.
-         */
-
-        const categorySearchWords = [
-
-            "restaurant",
-            "restaurants",
-            "cafe",
-            "cafes",
-            "bakery",
-            "bar",
-            "bars",
-            "pharmacy",
-            "bank",
-            "laundry",
-            "shopping",
-            "mall",
-            "supermarket",
-            "museum",
-            "park",
-            "cinema",
-            "movie",
-            "attraction"
-
-        ];
-
-
-        const queryLower =
-            textQuery.toLowerCase();
-
-
-        let matchingType =
-            null;
-
-
-        for (
-            const type of categorySearchWords
-        ) {
-
-            if (
-                queryLower === type ||
-                queryLower.includes(
-                    type
-                )
-            ) {
-
-                /*
-                 * Map common search wording to a Google
-                 * type.
-                 */
-
-                if (
-                    type === "restaurants"
-                ) {
-
-                    matchingType =
-                        "restaurant";
-
-                }
-
-                else if (
-                    type === "cafes"
-                ) {
-
-                    matchingType =
-                        "cafe";
-
-                }
-
-                else if (
-                    type === "bars"
-                ) {
-
-                    matchingType =
-                        "bar";
-
-                }
-
-                else if (
-                    type === "mall" ||
-                    type === "shopping"
-                ) {
-
-                    matchingType =
-                        "shopping_mall";
-
-                }
-
-                else if (
-                    type === "supermarket"
-                ) {
-
-                    matchingType =
-                        "supermarket";
-
-                }
-
-                else if (
-                    type === "movie"
-                ) {
-
-                    matchingType =
-                        "movie_theater";
-
-                }
-
-                else if (
-                    type === "cinema"
-                ) {
-
-                    matchingType =
-                        "movie_theater";
-
-                }
-
-                else if (
-                    type === "attraction"
-                ) {
-
-                    matchingType =
-                        "tourist_attraction";
-
-                }
-
-                else {
-
-                    matchingType =
-                        type;
-
-                }
-
-
-                break;
-
-            }
-
-        }
-
-
-        /*
-         * Only use the includedType when the query is
-         * clearly categorical.
-         *
-         * This prevents searches such as:
-         *
-         * "KFC Port of Spain"
-         *
-         * from being unnecessarily restricted.
-         */
-
-        if (
-            matchingType &&
-            (
-                queryLower ===
-                matchingType ||
-                categorySearchWords.includes(
-                    queryLower
-                )
+    async function googleRequest(
+        url,
+        body
+    ) {
+
+        console.log(
+            "BOKKARA GOOGLE REQUEST:",
+            url
+        );
+
+        console.log(
+            "BOKKARA GOOGLE BODY:",
+            JSON.stringify(
+                body,
+                null,
+                2
             )
-        ) {
-
-            body.includedType =
-                matchingType;
-
-        }
+        );
 
 
-        googleResponse =
+        const response =
             await fetch(
-                GOOGLE_TEXT_SEARCH_URL,
+                url,
                 {
 
-                    method: "POST",
+                    method:
+                        "POST",
 
                     headers: {
 
                         "Content-Type":
+                            "application/json",
+
+                        "Accept":
                             "application/json",
 
                         "X-Goog-Api-Key":
@@ -602,33 +319,416 @@ export default async function handler(req, res) {
                 }
             );
 
+
+        const text =
+            await response.text();
+
+
+        let data;
+
+
+        try {
+
+            data =
+                JSON.parse(
+                    text
+                );
+
+        }
+
+        catch (
+            error
+        ) {
+
+            console.error(
+                "BOKKARA GOOGLE INVALID JSON:",
+                text
+            );
+
+
+            throw new Error(
+                "Google Places returned invalid JSON."
+            );
+
+        }
+
+
+        console.log(
+            "BOKKARA GOOGLE STATUS:",
+            response.status
+        );
+
+
+        console.log(
+            "BOKKARA GOOGLE RESPONSE:",
+            JSON.stringify(
+                data,
+                null,
+                2
+            )
+        );
+
+
+        if (!response.ok) {
+
+            const googleMessage =
+                data?.error?.message ||
+                "Unknown Google Places error.";
+
+
+            throw new Error(
+                googleMessage
+            );
+
+        }
+
+
+        return data;
+
     }
 
 
     /* =====================================================
-       NEARBY SEARCH
+       NORMALIZE GOOGLE PLACE
     ====================================================== */
 
-    else {
+    function normalizeGooglePlace(
+        place
+    ) {
+
+        if (!place) {
+
+            return null;
+
+        }
+
+
+        const location =
+            place.location ||
+            {};
+
+
+        return {
+
+            placeId:
+                place.id ||
+                extractPlaceId(
+                    place.name
+                ) ||
+                "",
+
+
+            name:
+                place.displayName?.text ||
+                "",
+
+
+            address:
+                place.formattedAddress ||
+                "",
+
+
+            latitude:
+                Number.isFinite(
+                    Number(
+                        location.latitude
+                    )
+                )
+                    ? Number(
+                        location.latitude
+                    )
+                    : null,
+
+
+            longitude:
+                Number.isFinite(
+                    Number(
+                        location.longitude
+                    )
+                )
+                    ? Number(
+                        location.longitude
+                    )
+                    : null,
+
+
+            rating:
+                place.rating ??
+                null,
+
+
+            userRatingCount:
+                place.userRatingCount ??
+                null,
+
+
+            types:
+                Array.isArray(
+                    place.types
+                )
+                    ? place.types
+                    : [],
+
+
+            primaryType:
+                place.primaryType ||
+                null,
+
+
+            openNow:
+                place.currentOpeningHours?.openNow ??
+                null,
+
+
+            photoUrl:
+                getPhotoUrl(
+                    place
+                )
+
+        };
+
+    }
+
+
+    /* =====================================================
+       PHOTO
+    ====================================================== */
+
+    function getPhotoUrl(
+        place
+    ) {
 
         /*
-         * Nearby Search requires a location.
+         * Google Places New returns photo metadata here.
          *
-         * If the user hasn't granted location access,
-         * return a useful response instead of guessing.
+         * We do not expose a Google API key to the browser.
+         *
+         * For now return the photo resource name so the
+         * frontend/backend can be connected to a dedicated
+         * photo endpoint next.
          */
 
-        if (!hasLocation) {
+        if (
+            Array.isArray(
+                place.photos
+            ) &&
+            place.photos.length > 0
+        ) {
 
-            return res.status(400).json({
+            const photo =
+                place.photos[0];
 
-                success: false,
+
+            if (
+                photo.name
+            ) {
+
+                return photo.name;
+
+            }
+
+        }
+
+
+        return null;
+
+    }
+
+
+    /* =====================================================
+       DEDUPLICATE
+    ====================================================== */
+
+    function deduplicatePlaces(
+        places
+    ) {
+
+        const map =
+            new Map();
+
+
+        for (
+            const place of places
+        ) {
+
+            if (!place) {
+
+                continue;
+
+            }
+
+
+            const key =
+                place.placeId ||
+                (
+                    place.name +
+                    "|" +
+                    place.address
+                );
+
+
+            if (
+                !map.has(key)
+            ) {
+
+                map.set(
+                    key,
+                    place
+                );
+
+            }
+
+        }
+
+
+        return Array.from(
+            map.values()
+        );
+
+    }
+
+
+    /* =====================================================
+       TEXT SEARCH
+    ====================================================== */
+
+    if (query) {
+
+        try {
+
+            /*
+             * Google Text Search accepts an arbitrary text
+             * query and can optionally be biased around the
+             * user's location.
+             */
+
+            const body = {
+
+                textQuery:
+                    query,
+
+                pageSize:
+                    20
+
+            };
+
+
+            if (hasLocation) {
+
+                body.locationBias = {
+
+                    circle: {
+
+                        center: {
+
+                            latitude:
+                                latitude,
+
+                            longitude:
+                                longitude
+
+                        },
+
+                        radius:
+                            10000
+
+                    }
+
+                };
+
+            }
+
+
+            const googleData =
+                await googleRequest(
+                    TEXT_SEARCH_URL,
+                    body
+                );
+
+
+            const googlePlaces =
+                Array.isArray(
+                    googleData.places
+                )
+                    ? googleData.places
+                    : [];
+
+
+            const places =
+                googlePlaces
+                    .map(
+                        normalizeGooglePlace
+                    )
+                    .filter(Boolean);
+
+
+            console.log(
+                "BOKKARA TEXT SEARCH RESULT COUNT:",
+                places.length
+            );
+
+
+            return res.status(200).json({
+
+                success:
+                    true,
+
+                count:
+                    places.length,
+
+                category:
+                    category,
+
+                query:
+                    query,
+
+                location:
+                    hasLocation
+                        ? {
+
+                            latitude:
+                                latitude,
+
+                            longitude:
+                                longitude,
+
+                            accuracy:
+                                Number.isFinite(
+                                    accuracy
+                                )
+                                    ? accuracy
+                                    : null
+
+                        }
+                        : null,
+
+                places
+
+            });
+
+        }
+
+        catch (
+            error
+        ) {
+
+            console.error(
+                "BOKKARA TEXT SEARCH ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success:
+                    false,
 
                 error:
-                    "Location is required for a category search.",
+                    "Google Places search failed.",
 
-                code:
-                    "LOCATION_REQUIRED",
+                details:
+                    error.message ||
+                    "Unknown Google Places error.",
 
                 places: []
 
@@ -636,144 +736,39 @@ export default async function handler(req, res) {
 
         }
 
-
-        /*
-         * Nearby Search supports multiple includedTypes.
-         */
-
-        const body = {
-
-            includedTypes:
-                requestedTypes,
-
-            maxResultCount:
-                20,
-
-            rankPreference:
-                "POPULARITY",
-
-            locationRestriction: {
-
-                circle: {
-
-                    center: {
-
-                        latitude:
-                            lat,
-
-                        longitude:
-                            lng
-
-                    },
-
-                    /*
-                     * Search radius.
-                     *
-                     * 10 km is large enough for the initial
-                     * Bokkara Places experience while still
-                     * keeping the search local.
-                     */
-
-                    radius:
-                        10000
-
-                }
-
-            }
-
-        };
-
-
-        googleResponse =
-            await fetch(
-                GOOGLE_NEARBY_SEARCH_URL,
-                {
-
-                    method: "POST",
-
-                    headers: {
-
-                        "Content-Type":
-                            "application/json",
-
-                        "X-Goog-Api-Key":
-                            GOOGLE_API_KEY,
-
-                        "X-Goog-FieldMask":
-                            FIELD_MASK
-
-                    },
-
-                    body:
-                        JSON.stringify(
-                            body
-                        )
-
-                }
-            );
-
     }
 
 
     /* =====================================================
-       GOOGLE RESPONSE ERROR
+       CATEGORY / NEARBY SEARCH
     ====================================================== */
 
-    if (
-        !googleResponse.ok
-    ) {
+    /*
+     * No query means the user clicked a category.
+     *
+     * Category searches require the user's location.
+     */
 
-        let googleError;
+    if (!hasLocation) {
 
-
-        try {
-
-            googleError =
-                await googleResponse.json();
-
-        }
-
-        catch (error) {
-
-            googleError = {
-
-                error: {
-
-                    message:
-                        await googleResponse.text()
-
-                }
-
-            };
-
-        }
-
-
-        console.error(
-            "Google Places API error:",
-            JSON.stringify(
-                googleError,
-                null,
-                2
-            )
+        console.warn(
+            "BOKKARA CATEGORY SEARCH: LOCATION REQUIRED"
         );
 
 
-        return res.status(
-            googleResponse.status >= 400 &&
-            googleResponse.status < 600
-                ? googleResponse.status
-                : 500
-        ).json({
+        return res.status(400).json({
 
-            success: false,
+            success:
+                false,
 
             error:
-                "Google Places search failed.",
+                "Location is required for a category search.",
 
-            details:
-                googleError?.error?.message ||
-                "Unknown Google Places error.",
+            code:
+                "LOCATION_REQUIRED",
+
+            category:
+                category,
 
             places: []
 
@@ -783,214 +778,225 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PARSE GOOGLE RESPONSE
+       RUN EACH TYPE SEPARATELY
     ====================================================== */
 
-    const googleData =
-        await googleResponse.json();
+    const allPlaces = [];
 
 
-    const googlePlaces =
-        Array.isArray(
-            googleData.places
-        )
-            ? googleData.places
-            : [];
+    for (
+        const type of selectedTypes
+    ) {
+
+        try {
+
+            console.log(
+                "BOKKARA NEARBY TYPE:",
+                type
+            );
+
+
+            const body = {
+
+                includedTypes: [
+
+                    type
+
+                ],
+
+                maxResultCount:
+                    20,
+
+                rankPreference:
+                    "POPULARITY",
+
+                locationRestriction: {
+
+                    circle: {
+
+                        center: {
+
+                            latitude:
+                                latitude,
+
+                            longitude:
+                                longitude
+
+                        },
+
+                        radius:
+                            10000
+
+                    }
+
+                }
+
+            };
+
+
+            const googleData =
+                await googleRequest(
+                    NEARBY_SEARCH_URL,
+                    body
+                );
+
+
+            const googlePlaces =
+                Array.isArray(
+                    googleData.places
+                )
+                    ? googleData.places
+                    : [];
+
+
+            console.log(
+
+                "BOKKARA TYPE RESULT:",
+
+                type,
+
+                googlePlaces.length
+
+            );
+
+
+            for (
+                const place of googlePlaces
+            ) {
+
+                const normalized =
+                    normalizeGooglePlace(
+                        place
+                    );
+
+
+                if (
+                    normalized
+                ) {
+
+                    allPlaces.push(
+                        normalized
+                    );
+
+                }
+
+            }
+
+        }
+
+        catch (
+            error
+        ) {
+
+            /*
+             * Do NOT immediately kill the entire category
+             * search because one Google type failed.
+             *
+             * Continue searching the remaining types.
+             */
+
+            console.error(
+
+                "BOKKARA TYPE FAILED:",
+
+                type,
+
+                error.message
+
+            );
+
+        }
+
+    }
 
 
     /* =====================================================
-       NORMALIZE PLACES
+       DEDUPLICATE
     ====================================================== */
 
-    const places =
-        googlePlaces.map(
-            normalizeGooglePlace
+    let places =
+        deduplicatePlaces(
+            allPlaces
         );
 
 
     /* =====================================================
-       RETURN RESPONSE
+       LIMIT RESULTS
+    ====================================================== */
+
+    places =
+        places.slice(
+            0,
+            50
+        );
+
+
+    /* =====================================================
+       FINAL LOGGING
+    ====================================================== */
+
+    console.log(
+        "================================================="
+    );
+
+    console.log(
+        "BOKKARA FINAL CATEGORY:",
+        category
+    );
+
+    console.log(
+        "BOKKARA TYPES:",
+        selectedTypes
+    );
+
+    console.log(
+        "BOKKARA TOTAL PLACES:",
+        places.length
+    );
+
+    console.log(
+        "================================================="
+    );
+
+
+    /* =====================================================
+       RETURN
     ====================================================== */
 
     return res.status(200).json({
 
-        success: true,
+        success:
+            true,
 
         count:
             places.length,
 
         category:
-            cleanCategory,
+            category,
 
         query:
-            cleanQuery,
+            "",
 
-        location:
+        location: {
 
-            hasLocation
+            latitude:
+                latitude,
 
-                ? {
+            longitude:
+                longitude,
 
-                    latitude:
-                        lat,
+            accuracy:
+                Number.isFinite(
+                    accuracy
+                )
+                    ? accuracy
+                    : null
 
-                    longitude:
-                        lng,
-
-                    accuracy:
-                        Number.isFinite(
-                            Number(
-                                accuracy
-                            )
-                        )
-                            ? Number(
-                                accuracy
-                            )
-                            : null
-
-                }
-
-                : null,
+        },
 
         places
 
     });
-
-}
-
-
-/* =========================================================
-   NORMALIZE GOOGLE PLACE
-========================================================= */
-
-function normalizeGooglePlace(
-    place
-) {
-
-    const location =
-        place.location ||
-        {};
-
-
-    return {
-
-        /*
-         * Google Place ID
-         */
-
-        placeId:
-            place.id ||
-            extractPlaceId(
-                place.name
-            ) ||
-            "",
-
-
-        /*
-         * Human-readable name
-         */
-
-        name:
-            place.displayName?.text ||
-            "",
-
-
-        /*
-         * Formatted address
-         */
-
-        address:
-            place.formattedAddress ||
-            "",
-
-
-        /*
-         * Coordinates
-         */
-
-        latitude:
-            Number.isFinite(
-                Number(
-                    location.latitude
-                )
-            )
-                ? Number(
-                    location.latitude
-                )
-                : null,
-
-
-        longitude:
-            Number.isFinite(
-                Number(
-                    location.longitude
-                )
-            )
-                ? Number(
-                    location.longitude
-                )
-                : null,
-
-
-        /*
-         * Google rating
-         */
-
-        rating:
-            place.rating ??
-            null,
-
-
-        /*
-         * Number of ratings
-         */
-
-        userRatingCount:
-            place.userRatingCount ??
-            null,
-
-
-        /*
-         * Place types
-         */
-
-        types:
-            Array.isArray(
-                place.types
-            )
-                ? place.types
-                : [],
-
-
-        primaryType:
-            place.primaryType ||
-            null,
-
-
-        /*
-         * Current opening status
-         */
-
-        openNow:
-            place.currentOpeningHours?.openNow ??
-            null,
-
-
-        /*
-         * Google photo resources are deliberately NOT
-         * converted here.
-         *
-         * We didn't request photos in the initial search
-         * field mask.
-         *
-         * We'll add a dedicated photo/details endpoint
-         * next so photo retrieval stays controlled.
-         */
-
-        photoUrl:
-            null
-
-    };
 
 }
 
