@@ -79,7 +79,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       READ PARAMETERS
+       PARAMETERS
     ====================================================== */
 
     const query =
@@ -113,7 +113,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       VALIDATE LOCATION
+       LOCATION
     ====================================================== */
 
     const hasLocation =
@@ -164,7 +164,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY CONFIGURATION
+       CATEGORY TYPES
     ====================================================== */
 
     const CATEGORY_TYPES = {
@@ -227,25 +227,15 @@ export default async function handler(req, res) {
     const FIELD_MASK = [
 
         "places.id",
-
         "places.name",
-
         "places.displayName",
-
         "places.formattedAddress",
-
         "places.location",
-
         "places.rating",
-
         "places.userRatingCount",
-
         "places.types",
-
         "places.primaryType",
-
         "places.currentOpeningHours",
-
         "places.photos"
 
     ].join(",");
@@ -264,7 +254,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE REQUEST HELPER
+       GOOGLE REQUEST
     ====================================================== */
 
     async function googleRequest(
@@ -275,15 +265,6 @@ export default async function handler(req, res) {
         console.log(
             "BOKKARA GOOGLE REQUEST:",
             url
-        );
-
-        console.log(
-            "BOKKARA GOOGLE BODY:",
-            JSON.stringify(
-                body,
-                null,
-                2
-            )
         );
 
 
@@ -336,9 +317,7 @@ export default async function handler(req, res) {
 
         }
 
-        catch (
-            error
-        ) {
+        catch (error) {
 
             console.error(
                 "BOKKARA GOOGLE INVALID JSON:",
@@ -356,16 +335,6 @@ export default async function handler(req, res) {
         console.log(
             "BOKKARA GOOGLE STATUS:",
             response.status
-        );
-
-
-        console.log(
-            "BOKKARA GOOGLE RESPONSE:",
-            JSON.stringify(
-                data,
-                null,
-                2
-            )
         );
 
 
@@ -389,7 +358,66 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       NORMALIZE GOOGLE PLACE
+       PHOTO URL
+    ====================================================== */
+
+    function getPhotoUrl(
+        place
+    ) {
+
+        if (
+            !place ||
+            !Array.isArray(place.photos) ||
+            !place.photos.length
+        ) {
+
+            return "";
+
+        }
+
+
+        const photo =
+            place.photos[0];
+
+
+        if (
+            !photo ||
+            typeof photo.name !== "string" ||
+            !photo.name.trim()
+        ) {
+
+            return "";
+
+        }
+
+
+        /*
+         * IMPORTANT:
+         *
+         * Google gives us a photo resource such as:
+         *
+         * places/ChIJ.../photos/...
+         *
+         * That is NOT an image URL.
+         *
+         * We send it to our own photo proxy endpoint.
+         */
+
+        return (
+            "https://api-places-search-js.vercel.app/api/places/photo" +
+            "?name=" +
+            encodeURIComponent(
+                photo.name
+            ) +
+            "&width=800" +
+            "&height=800"
+        );
+
+    }
+
+
+    /* =====================================================
+       NORMALIZE PLACE
     ====================================================== */
 
     function normalizeGooglePlace(
@@ -491,51 +519,6 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PHOTO
-    ====================================================== */
-
-    function getPhotoUrl(
-        place
-    ) {
-
-        /*
-         * Google Places New returns photo metadata here.
-         *
-         * We do not expose a Google API key to the browser.
-         *
-         * For now return the photo resource name so the
-         * frontend/backend can be connected to a dedicated
-         * photo endpoint next.
-         */
-
-        if (
-            Array.isArray(
-                place.photos
-            ) &&
-            place.photos.length > 0
-        ) {
-
-            const photo =
-                place.photos[0];
-
-
-            if (
-                photo.name
-            ) {
-
-                return photo.name;
-
-            }
-
-        }
-
-
-        return null;
-
-    }
-
-
-    /* =====================================================
        DEDUPLICATE
     ====================================================== */
 
@@ -552,9 +535,7 @@ export default async function handler(req, res) {
         ) {
 
             if (!place) {
-
                 continue;
-
             }
 
 
@@ -595,12 +576,6 @@ export default async function handler(req, res) {
     if (query) {
 
         try {
-
-            /*
-             * Google Text Search accepts an arbitrary text
-             * query and can optionally be biased around the
-             * user's location.
-             */
 
             const body = {
 
@@ -662,12 +637,6 @@ export default async function handler(req, res) {
                     .filter(Boolean);
 
 
-            console.log(
-                "BOKKARA TEXT SEARCH RESULT COUNT:",
-                places.length
-            );
-
-
             return res.status(200).json({
 
                 success:
@@ -708,9 +677,7 @@ export default async function handler(req, res) {
 
         }
 
-        catch (
-            error
-        ) {
+        catch (error) {
 
             console.error(
                 "BOKKARA TEXT SEARCH ERROR:",
@@ -740,21 +707,10 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY / NEARBY SEARCH
+       CATEGORY SEARCH
     ====================================================== */
 
-    /*
-     * No query means the user clicked a category.
-     *
-     * Category searches require the user's location.
-     */
-
     if (!hasLocation) {
-
-        console.warn(
-            "BOKKARA CATEGORY SEARCH: LOCATION REQUIRED"
-        );
-
 
         return res.status(400).json({
 
@@ -778,7 +734,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       RUN EACH TYPE SEPARATELY
+       RUN CATEGORY TYPES
     ====================================================== */
 
     const allPlaces = [];
@@ -789,12 +745,6 @@ export default async function handler(req, res) {
     ) {
 
         try {
-
-            console.log(
-                "BOKKARA NEARBY TYPE:",
-                type
-            );
-
 
             const body = {
 
@@ -849,17 +799,6 @@ export default async function handler(req, res) {
                     : [];
 
 
-            console.log(
-
-                "BOKKARA TYPE RESULT:",
-
-                type,
-
-                googlePlaces.length
-
-            );
-
-
             for (
                 const place of googlePlaces
             ) {
@@ -870,9 +809,7 @@ export default async function handler(req, res) {
                     );
 
 
-                if (
-                    normalized
-                ) {
+                if (normalized) {
 
                     allPlaces.push(
                         normalized
@@ -884,25 +821,12 @@ export default async function handler(req, res) {
 
         }
 
-        catch (
-            error
-        ) {
-
-            /*
-             * Do NOT immediately kill the entire category
-             * search because one Google type failed.
-             *
-             * Continue searching the remaining types.
-             */
+        catch (error) {
 
             console.error(
-
                 "BOKKARA TYPE FAILED:",
-
                 type,
-
                 error.message
-
             );
 
         }
@@ -921,7 +845,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       LIMIT RESULTS
+       LIMIT
     ====================================================== */
 
     places =
@@ -929,34 +853,6 @@ export default async function handler(req, res) {
             0,
             50
         );
-
-
-    /* =====================================================
-       FINAL LOGGING
-    ====================================================== */
-
-    console.log(
-        "================================================="
-    );
-
-    console.log(
-        "BOKKARA FINAL CATEGORY:",
-        category
-    );
-
-    console.log(
-        "BOKKARA TYPES:",
-        selectedTypes
-    );
-
-    console.log(
-        "BOKKARA TOTAL PLACES:",
-        places.length
-    );
-
-    console.log(
-        "================================================="
-    );
 
 
     /* =====================================================
