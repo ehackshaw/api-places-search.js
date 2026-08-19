@@ -254,6 +254,14 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
+       PHOTO PROXY BASE URL
+    ====================================================== */
+
+    const PHOTO_PROXY_BASE =
+        "https://api-places-search-js.vercel.app/api/places/photo";
+
+
+    /* =====================================================
        GOOGLE REQUEST
     ====================================================== */
 
@@ -391,23 +399,26 @@ export default async function handler(req, res) {
         }
 
 
+        const photoName =
+            photo.name.trim();
+
+
         /*
-         * IMPORTANT:
+         * Google photo resource:
          *
-         * Google gives us a photo resource such as:
+         * places/PLACE_ID/photos/PHOTO_ID
          *
-         * places/ChIJ.../photos/...
+         * This is NOT directly usable by the browser.
          *
-         * That is NOT an image URL.
-         *
-         * We send it to our own photo proxy endpoint.
+         * We send it through our own server-side
+         * photo proxy.
          */
 
         return (
-            "https://api-places-search-js.vercel.app/api/places/photo" +
+            PHOTO_PROXY_BASE +
             "?name=" +
             encodeURIComponent(
-                photo.name
+                photoName
             ) +
             "&width=800" +
             "&height=800"
@@ -436,7 +447,7 @@ export default async function handler(req, res) {
             {};
 
 
-        return {
+        const normalized = {
 
             placeId:
                 place.id ||
@@ -514,6 +525,39 @@ export default async function handler(req, res) {
                 )
 
         };
+
+
+        /*
+         * DEBUG
+         */
+
+        console.log(
+            "BOKKARA NORMALIZED PLACE:",
+            {
+                name:
+                    normalized.name,
+
+                placeId:
+                    normalized.placeId,
+
+                googlePhotos:
+                    Array.isArray(place.photos)
+                        ? place.photos.length
+                        : 0,
+
+                googlePhotoName:
+                    Array.isArray(place.photos) &&
+                    place.photos[0]
+                        ? place.photos[0].name
+                        : "",
+
+                photoUrl:
+                    normalized.photoUrl
+            }
+        );
+
+
+        return normalized;
 
     }
 
@@ -707,7 +751,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY SEARCH
+       CATEGORY SEARCH REQUIRES LOCATION
     ====================================================== */
 
     if (!hasLocation) {
