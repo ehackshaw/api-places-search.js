@@ -88,6 +88,12 @@ export default async function handler(req, res) {
             : "";
 
 
+    const placeId =
+        typeof req.query.placeId === "string"
+            ? req.query.placeId.trim()
+            : "";
+
+
     const category =
         typeof req.query.category === "string"
             ? req.query.category.trim().toLowerCase()
@@ -112,6 +118,18 @@ export default async function handler(req, res) {
             : null;
 
 
+    const radius =
+        req.query.radius !== undefined
+            ? Number(req.query.radius)
+            : 10000;
+
+
+    const pageToken =
+        typeof req.query.pageToken === "string"
+            ? req.query.pageToken.trim()
+            : "";
+
+
     /* =====================================================
        LOCATION
     ====================================================== */
@@ -125,6 +143,23 @@ export default async function handler(req, res) {
         longitude <= 180;
 
 
+    /* =====================================================
+       RADIUS
+    ====================================================== */
+
+    const safeRadius =
+        Number.isFinite(radius)
+            ? Math.min(
+                Math.max(radius, 1),
+                50000
+            )
+            : 10000;
+
+
+    /* =====================================================
+       LOGGING
+    ====================================================== */
+
     console.log(
         "================================================="
     );
@@ -136,6 +171,11 @@ export default async function handler(req, res) {
     console.log(
         "query:",
         query
+    );
+
+    console.log(
+        "placeId:",
+        placeId
     );
 
     console.log(
@@ -154,8 +194,13 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "hasLocation:",
-        hasLocation
+        "radius:",
+        safeRadius
+    );
+
+    console.log(
+        "pageToken:",
+        pageToken
     );
 
     console.log(
@@ -164,7 +209,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY TYPES
+       GOOGLE CATEGORY TYPES
     ====================================================== */
 
     const CATEGORY_TYPES = {
@@ -186,7 +231,15 @@ export default async function handler(req, res) {
             "museum",
             "park",
             "movie_theater",
-            "amusement_park"
+            "amusement_park",
+            "art_gallery",
+            "library",
+            "night_club",
+            "performing_arts_theater",
+            "zoo",
+            "aquarium",
+            "bowling_alley",
+            "gym"
 
         ],
 
@@ -197,7 +250,18 @@ export default async function handler(req, res) {
             "department_store",
             "clothing_store",
             "supermarket",
-            "convenience_store"
+            "convenience_store",
+            "grocery_store",
+            "shoe_store",
+            "jewelry_store",
+            "book_store",
+            "electronics_store",
+            "furniture_store",
+            "hardware_store",
+            "home_goods_store",
+            "liquor_store",
+            "pet_store",
+            "sporting_goods_store"
 
         ],
 
@@ -208,7 +272,18 @@ export default async function handler(req, res) {
             "pharmacy",
             "laundry",
             "car_repair",
-            "beauty_salon"
+            "beauty_salon",
+            "hair_care",
+            "dentist",
+            "doctor",
+            "hospital",
+            "insurance_agency",
+            "real_estate_agency",
+            "lawyer",
+            "accounting",
+            "travel_agency",
+            "post_office",
+            "car_rental"
 
         ]
 
@@ -221,24 +296,15 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       FIELD MASK
+       GOOGLE FIELD MASK
+       
+       WE ARE REQUESTING EVERYTHING GOOGLE MAKES
+       AVAILABLE FOR THE OPERATION.
+       
+       Google supports "*" as the field mask.
     ====================================================== */
 
-    const FIELD_MASK = [
-
-        "places.id",
-        "places.name",
-        "places.displayName",
-        "places.formattedAddress",
-        "places.location",
-        "places.rating",
-        "places.userRatingCount",
-        "places.types",
-        "places.primaryType",
-        "places.currentOpeningHours",
-        "places.photos"
-
-    ].join(",");
+    const FIELD_MASK = "*";
 
 
     /* =====================================================
@@ -253,12 +319,8 @@ export default async function handler(req, res) {
         "https://places.googleapis.com/v1/places:searchNearby";
 
 
-    /* =====================================================
-       PHOTO PROXY BASE URL
-    ====================================================== */
-
-    const PHOTO_PROXY_BASE =
-        "https://api-places-search-js.vercel.app/api/places/photo";
+    const PLACE_DETAILS_BASE_URL =
+        "https://places.googleapis.com/v1/places/";
 
 
     /* =====================================================
@@ -319,9 +381,9 @@ export default async function handler(req, res) {
         try {
 
             data =
-                JSON.parse(
-                    text
-                );
+                text
+                    ? JSON.parse(text)
+                    : {};
 
         }
 
@@ -353,6 +415,147 @@ export default async function handler(req, res) {
                 "Unknown Google Places error.";
 
 
+            console.error(
+                "BOKKARA GOOGLE ERROR:",
+                data
+            );
+
+
+            throw new Error(
+                googleMessage
+            );
+
+        }
+
+
+        return data;
+
+    }
+
+
+    /* =====================================================
+       GOOGLE PLACE DETAILS
+       
+       Same backend.
+       
+       Call:
+       
+       /api/places/search?placeId=GOOGLE_PLACE_ID
+    ====================================================== */
+
+    async function getPlaceDetails(
+        id
+    ) {
+
+        if (
+            typeof id !== "string" ||
+            !id.trim()
+        ) {
+
+            throw new Error(
+                "A valid Google Place ID is required."
+            );
+
+        }
+
+
+        const cleanId =
+            id
+                .trim()
+                .replace(
+                    /^places\//,
+                    ""
+                );
+
+
+        const url =
+            PLACE_DETAILS_BASE_URL +
+            encodeURIComponent(
+                cleanId
+            );
+
+
+        console.log(
+            "BOKKARA GOOGLE PLACE DETAILS:",
+            cleanId
+        );
+
+
+        const response =
+            await fetch(
+                url,
+                {
+
+                    method:
+                        "GET",
+
+                    headers: {
+
+                        "Accept":
+                            "application/json",
+
+                        "X-Goog-Api-Key":
+                            GOOGLE_API_KEY,
+
+                        "X-Goog-FieldMask":
+                            FIELD_MASK
+
+                    }
+
+                }
+            );
+
+
+        const text =
+            await response.text();
+
+
+        let data;
+
+
+        try {
+
+            data =
+                text
+                    ? JSON.parse(text)
+                    : {};
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "BOKKARA DETAILS INVALID JSON:",
+                text
+            );
+
+
+            throw new Error(
+                "Google Places returned invalid JSON."
+            );
+
+        }
+
+
+        console.log(
+            "BOKKARA DETAILS STATUS:",
+            response.status
+        );
+
+
+        if (!response.ok) {
+
+            const googleMessage =
+                data?.error?.message ||
+                "Unknown Google Places error.";
+
+
+            console.error(
+                "BOKKARA DETAILS ERROR:",
+                data
+            );
+
+
             throw new Error(
                 googleMessage
             );
@@ -367,68 +570,129 @@ export default async function handler(req, res) {
 
     /* =====================================================
        PHOTO URL
+       
+       Google returns photo resource names.
+       
+       We keep the Google photo information AND create
+       convenient URLs through the existing photo endpoint.
     ====================================================== */
 
-    function getPhotoUrl(
-        place
+    function createPhotoUrl(
+        photoName,
+        width = 1200,
+        height = 1200
     ) {
 
         if (
-            !place ||
-            !Array.isArray(place.photos) ||
-            !place.photos.length
+            typeof photoName !== "string" ||
+            !photoName.trim()
         ) {
 
             return "";
 
         }
 
-
-        const photo =
-            place.photos[0];
-
-
-        if (
-            !photo ||
-            typeof photo.name !== "string" ||
-            !photo.name.trim()
-        ) {
-
-            return "";
-
-        }
-
-
-        const photoName =
-            photo.name.trim();
-
-
-        /*
-         * Google photo resource:
-         *
-         * places/PLACE_ID/photos/PHOTO_ID
-         *
-         * This is NOT directly usable by the browser.
-         *
-         * We send it through our own server-side
-         * photo proxy.
-         */
 
         return (
-            PHOTO_PROXY_BASE +
+            "https://api-places-search-js.vercel.app/api/places/photo" +
             "?name=" +
             encodeURIComponent(
                 photoName
             ) +
-            "&width=800" +
-            "&height=800"
+            "&width=" +
+            encodeURIComponent(
+                width
+            ) +
+            "&height=" +
+            encodeURIComponent(
+                height
+            )
         );
 
     }
 
 
     /* =====================================================
-       NORMALIZE PLACE
+       ENRICH PHOTOS
+       
+       IMPORTANT:
+       
+       We DO NOT replace Google's photo data.
+       
+       We keep Google's complete photo object and add
+       convenient photoUrl / proxyUrl values.
+    ====================================================== */
+
+    function enrichPhotos(
+        photos
+    ) {
+
+        if (
+            !Array.isArray(photos)
+        ) {
+
+            return [];
+
+        }
+
+
+        return photos.map(
+            (
+                photo,
+                index
+            ) => {
+
+                if (!photo) {
+
+                    return null;
+
+                }
+
+
+                const photoName =
+                    typeof photo.name === "string"
+                        ? photo.name
+                        : "";
+
+
+                return {
+
+                    ...photo,
+
+                    index,
+
+                    photoUrl:
+                        createPhotoUrl(
+                            photoName,
+                            1200,
+                            1200
+                        ),
+
+                    thumbnailUrl:
+                        createPhotoUrl(
+                            photoName,
+                            600,
+                            600
+                        )
+
+                };
+
+            }
+        )
+        .filter(Boolean);
+
+    }
+
+
+    /* =====================================================
+       NORMALIZE GOOGLE PLACE
+       
+       VERY IMPORTANT:
+       
+       `google` contains the COMPLETE ORIGINAL GOOGLE
+       PLACE OBJECT.
+       
+       Nothing from Google is thrown away.
     ====================================================== */
 
     function normalizeGooglePlace(
@@ -442,19 +706,39 @@ export default async function handler(req, res) {
         }
 
 
+        const placeResourceName =
+            typeof place.name === "string"
+                ? place.name
+                : "";
+
+
+        const extractedPlaceId =
+            place.id ||
+            extractPlaceId(
+                placeResourceName
+            ) ||
+            "";
+
+
+        const photos =
+            enrichPhotos(
+                place.photos
+            );
+
+
         const location =
             place.location ||
             {};
 
 
-        const normalized = {
+        return {
+
+            /* =============================================
+               STANDARD BOKKARA FIELDS
+            ============================================== */
 
             placeId:
-                place.id ||
-                extractPlaceId(
-                    place.name
-                ) ||
-                "",
+                extractedPlaceId,
 
 
             name:
@@ -464,6 +748,11 @@ export default async function handler(req, res) {
 
             address:
                 place.formattedAddress ||
+                "",
+
+
+            shortAddress:
+                place.shortFormattedAddress ||
                 "",
 
 
@@ -501,6 +790,11 @@ export default async function handler(req, res) {
                 null,
 
 
+            primaryType:
+                place.primaryType ||
+                null,
+
+
             types:
                 Array.isArray(
                     place.types
@@ -509,8 +803,38 @@ export default async function handler(req, res) {
                     : [],
 
 
-            primaryType:
-                place.primaryType ||
+            businessStatus:
+                place.businessStatus ||
+                null,
+
+
+            phone:
+                place.nationalPhoneNumber ||
+                null,
+
+
+            internationalPhone:
+                place.internationalPhoneNumber ||
+                null,
+
+
+            website:
+                place.websiteUri ||
+                null,
+
+
+            googleMapsUrl:
+                place.googleMapsUri ||
+                null,
+
+
+            priceLevel:
+                place.priceLevel ??
+                null,
+
+
+            priceRange:
+                place.priceRange ??
                 null,
 
 
@@ -519,45 +843,24 @@ export default async function handler(req, res) {
                 null,
 
 
-            photoUrl:
-                getPhotoUrl(
-                    place
-                )
+            photos,
+
+
+            /* =============================================
+               COMPLETE GOOGLE OBJECT
+               
+               NOTHING IS LOST.
+            ============================================== */
+
+            google: {
+
+                ...place,
+
+                photos
+
+            }
 
         };
-
-
-        /*
-         * DEBUG
-         */
-
-        console.log(
-            "BOKKARA NORMALIZED PLACE:",
-            {
-                name:
-                    normalized.name,
-
-                placeId:
-                    normalized.placeId,
-
-                googlePhotos:
-                    Array.isArray(place.photos)
-                        ? place.photos.length
-                        : 0,
-
-                googlePhotoName:
-                    Array.isArray(place.photos) &&
-                    place.photos[0]
-                        ? place.photos[0].name
-                        : "",
-
-                photoUrl:
-                    normalized.photoUrl
-            }
-        );
-
-
-        return normalized;
 
     }
 
@@ -579,7 +882,9 @@ export default async function handler(req, res) {
         ) {
 
             if (!place) {
+
                 continue;
+
             }
 
 
@@ -614,6 +919,103 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
+       PLACE DETAILS REQUEST
+       
+       If frontend sends:
+       
+       ?placeId=ChIJ...
+       
+       return the complete Google Place.
+    ====================================================== */
+
+    if (placeId) {
+
+        try {
+
+            const googlePlace =
+                await getPlaceDetails(
+                    placeId
+                );
+
+
+            const place =
+                normalizeGooglePlace(
+                    googlePlace
+                );
+
+
+            if (!place) {
+
+                return res.status(404).json({
+
+                    success:
+                        false,
+
+                    error:
+                        "Google Place was not found.",
+
+                    place:
+                        null
+
+                });
+
+            }
+
+
+            return res.status(200).json({
+
+                success:
+                    true,
+
+                type:
+                    "place_details",
+
+                placeId:
+                    place.placeId,
+
+                place,
+
+                google:
+                    googlePlace
+
+            });
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "BOKKARA PLACE DETAILS ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success:
+                    false,
+
+                type:
+                    "place_details",
+
+                error:
+                    "Google Places details request failed.",
+
+                details:
+                    error.message ||
+                    "Unknown Google Places error.",
+
+                place:
+                    null
+
+            });
+
+        }
+
+    }
+
+
+    /* =====================================================
        TEXT SEARCH
     ====================================================== */
 
@@ -632,6 +1034,22 @@ export default async function handler(req, res) {
             };
 
 
+            /* =============================================
+               PAGE TOKEN
+            ============================================== */
+
+            if (pageToken) {
+
+                body.pageToken =
+                    pageToken;
+
+            }
+
+
+            /* =============================================
+               LOCATION BIAS
+            ============================================== */
+
             if (hasLocation) {
 
                 body.locationBias = {
@@ -649,7 +1067,7 @@ export default async function handler(req, res) {
                         },
 
                         radius:
-                            10000
+                            safeRadius
 
                     }
 
@@ -686,6 +1104,9 @@ export default async function handler(req, res) {
                 success:
                     true,
 
+                type:
+                    "text_search",
+
                 count:
                     places.length,
 
@@ -710,12 +1131,28 @@ export default async function handler(req, res) {
                                     accuracy
                                 )
                                     ? accuracy
-                                    : null
+                                    : null,
+
+                            radius:
+                                safeRadius
 
                         }
                         : null,
 
-                places
+                nextPageToken:
+                    googleData.nextPageToken ||
+                    null,
+
+                places,
+
+                /* =========================================
+                   ORIGINAL GOOGLE RESPONSE
+                   
+                   NOTHING LOST.
+                ========================================== */
+
+                google:
+                    googleData
 
             });
 
@@ -733,6 +1170,9 @@ export default async function handler(req, res) {
 
                 success:
                     false,
+
+                type:
+                    "text_search",
 
                 error:
                     "Google Places search failed.",
@@ -778,11 +1218,18 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       RUN CATEGORY TYPES
+       CATEGORY SEARCH
     ====================================================== */
 
     const allPlaces = [];
 
+
+    const googleResponses = [];
+
+
+    /* =====================================================
+       RUN GOOGLE NEARBY SEARCH
+    ====================================================== */
 
     for (
         const type of selectedTypes
@@ -819,7 +1266,7 @@ export default async function handler(req, res) {
                         },
 
                         radius:
-                            10000
+                            safeRadius
 
                     }
 
@@ -833,6 +1280,16 @@ export default async function handler(req, res) {
                     NEARBY_SEARCH_URL,
                     body
                 );
+
+
+            googleResponses.push({
+
+                type,
+
+                response:
+                    googleData
+
+            });
 
 
             const googlePlaces =
@@ -868,9 +1325,13 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-                "BOKKARA TYPE FAILED:",
+
+                "BOKKARA GOOGLE TYPE FAILED:",
+
                 type,
+
                 error.message
+
             );
 
         }
@@ -908,6 +1369,9 @@ export default async function handler(req, res) {
         success:
             true,
 
+        type:
+            "category_search",
+
         count:
             places.length,
 
@@ -930,11 +1394,27 @@ export default async function handler(req, res) {
                     accuracy
                 )
                     ? accuracy
-                    : null
+                    : null,
+
+            radius:
+                safeRadius
 
         },
 
-        places
+        places,
+
+        /* ================================================
+           GOOGLE RESPONSES
+           
+           Every Google response is also returned.
+           
+           This means if Google adds something that our
+           convenience normalization doesn't explicitly
+           understand, your frontend still has access to it.
+        ================================================ */
+
+        google:
+            googleResponses
 
     });
 
