@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     if (!GOOGLE_API_KEY) {
 
         console.error(
-            "BOKKARA PLACES ERROR: GOOGLE_PLACES_API_KEY is missing."
+            "BOKKARA ERROR: GOOGLE_PLACES_API_KEY is missing."
         );
 
 
@@ -131,7 +131,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       LOCATION VALIDATION
+       LOCATION
     ====================================================== */
 
     const hasLocation =
@@ -165,7 +165,7 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "BOKKARA PLACES SEARCH REQUEST"
+        "BOKKARA PLACES SEARCH"
     );
 
     console.log(
@@ -199,17 +199,12 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "pageToken:",
-        pageToken
-    );
-
-    console.log(
         "================================================="
     );
 
 
     /* =====================================================
-       GOOGLE CATEGORY TYPES
+       CATEGORY TYPES
     ====================================================== */
 
     const CATEGORY_TYPES = {
@@ -223,7 +218,6 @@ export default async function handler(req, res) {
             "meal_takeaway"
 
         ],
-
 
         things: [
 
@@ -242,7 +236,6 @@ export default async function handler(req, res) {
             "gym"
 
         ],
-
 
         shopping: [
 
@@ -264,7 +257,6 @@ export default async function handler(req, res) {
             "sporting_goods_store"
 
         ],
-
 
         services: [
 
@@ -307,29 +299,33 @@ export default async function handler(req, res) {
         "https://places.googleapis.com/v1/places:searchNearby";
 
 
-    const PLACE_DETAILS_BASE_URL =
+    const DETAILS_BASE_URL =
         "https://places.googleapis.com/v1/places/";
 
 
     /* =====================================================
-       IMPORTANT
+       FIELD MASKS
        
-       SEARCH + DETAILS BOTH REQUEST EVERYTHING.
-
-       Google supports "*" for the field mask.
+       IMPORTANT:
        
-       Search:
+       DO NOT use the same mask for every operation.
+       
+       Text Search:
+       places.* + nextPageToken
+       
+       Nearby Search:
        places.*
        
        Details:
        *
     ====================================================== */
 
-    const SEARCH_FIELD_MASK =
-        "places.*," +
-        "nextPageToken," +
-        "routingSummaries," +
-        "contextualContents";
+    const TEXT_SEARCH_FIELD_MASK =
+        "places.*,nextPageToken";
+
+
+    const NEARBY_SEARCH_FIELD_MASK =
+        "places.*";
 
 
     const DETAILS_FIELD_MASK =
@@ -337,16 +333,17 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE SEARCH REQUEST
+       GOOGLE POST REQUEST
     ====================================================== */
 
-    async function googleSearchRequest(
+    async function googlePost(
         url,
-        body
+        body,
+        fieldMask
     ) {
 
         console.log(
-            "BOKKARA GOOGLE SEARCH:",
+            "BOKKARA GOOGLE POST:",
             url
         );
 
@@ -371,7 +368,7 @@ export default async function handler(req, res) {
                             GOOGLE_API_KEY,
 
                         "X-Goog-FieldMask":
-                            SEARCH_FIELD_MASK
+                            fieldMask
 
                     },
 
@@ -403,7 +400,7 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-                "BOKKARA GOOGLE SEARCH INVALID JSON:",
+                "BOKKARA GOOGLE INVALID JSON:",
                 text
             );
 
@@ -416,7 +413,7 @@ export default async function handler(req, res) {
 
 
         console.log(
-            "BOKKARA GOOGLE SEARCH STATUS:",
+            "BOKKARA GOOGLE STATUS:",
             response.status
         );
 
@@ -424,7 +421,7 @@ export default async function handler(req, res) {
         if (!response.ok) {
 
             console.error(
-                "BOKKARA GOOGLE SEARCH ERROR:",
+                "BOKKARA GOOGLE ERROR:",
                 data
             );
 
@@ -433,7 +430,7 @@ export default async function handler(req, res) {
 
                 data?.error?.message ||
 
-                "Google Places search failed."
+                "Google Places request failed."
 
             );
 
@@ -447,11 +444,6 @@ export default async function handler(req, res) {
 
     /* =====================================================
        GOOGLE PLACE DETAILS
-       
-       THIS IS THE IMPORTANT PART.
-       
-       Every search result is sent back to Google Place
-       Details so we get the complete place object.
     ====================================================== */
 
     async function getPlaceDetails(
@@ -478,14 +470,14 @@ export default async function handler(req, res) {
 
 
         const url =
-            PLACE_DETAILS_BASE_URL +
+            DETAILS_BASE_URL +
             encodeURIComponent(
                 cleanId
             );
 
 
         console.log(
-            "BOKKARA FULL PLACE DETAILS:",
+            "BOKKARA DETAILS REQUEST:",
             cleanId
         );
 
@@ -546,8 +538,7 @@ export default async function handler(req, res) {
 
         console.log(
             "BOKKARA DETAILS STATUS:",
-            response.status,
-            cleanId
+            response.status
         );
 
 
@@ -593,7 +584,7 @@ export default async function handler(req, res) {
         ) {
 
             return resourceName.substring(
-                "places/".length
+                7
             );
 
         }
@@ -605,14 +596,48 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PHOTO URL
-       
-       IMPORTANT:
-       
-       Google photo resource names are NOT normal image
-       URLs.
-       
-       They must be passed through Place Photo Media.
+       GET PLACE ID FROM GOOGLE OBJECT
+    ====================================================== */
+
+    function getPlaceId(
+        place
+    ) {
+
+        if (!place) {
+
+            return "";
+
+        }
+
+
+        if (
+            typeof place.id === "string" &&
+            place.id.trim()
+        ) {
+
+            return place.id.trim();
+
+        }
+
+
+        if (
+            typeof place.name === "string"
+        ) {
+
+            return extractPlaceId(
+                place.name
+            );
+
+        }
+
+
+        return "";
+
+    }
+
+
+    /* =====================================================
+       PHOTO PROXY URL
     ====================================================== */
 
     function createPhotoUrl(
@@ -698,19 +723,9 @@ export default async function handler(req, res) {
 
                     return {
 
-                        /* =================================
-                           ORIGINAL GOOGLE PHOTO DATA
-                        ================================= */
-
                         ...photo,
 
-
-                        /* =================================
-                           BOKKARA CONVENIENCE FIELDS
-                        ================================= */
-
                         index,
-
 
                         photoUrl:
                             createPhotoUrl(
@@ -719,14 +734,12 @@ export default async function handler(req, res) {
                                 1600
                             ),
 
-
                         thumbnailUrl:
                             createPhotoUrl(
                                 photoName,
-                                800,
-                                800
+                                600,
+                                600
                             ),
-
 
                         largeUrl:
                             createPhotoUrl(
@@ -747,8 +760,6 @@ export default async function handler(req, res) {
 
     /* =====================================================
        ENRICH REVIEWS
-       
-       DO NOT REMOVE ANY GOOGLE REVIEW DATA.
     ====================================================== */
 
     function enrichReviews(
@@ -779,6 +790,11 @@ export default async function handler(req, res) {
                     }
 
 
+                    const author =
+                        review.authorAttribution ||
+                        {};
+
+
                     return {
 
                         ...review,
@@ -790,15 +806,15 @@ export default async function handler(req, res) {
                             null,
 
                         authorName:
-                            review.authorAttribution?.displayName ||
+                            author.displayName ||
                             "",
 
                         authorPhoto:
-                            review.authorAttribution?.photoUri ||
+                            author.photoUri ||
                             "",
 
                         authorUri:
-                            review.authorAttribution?.uri ||
+                            author.uri ||
                             "",
 
                         reviewText:
@@ -844,16 +860,12 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       NORMALIZE PLACE
+       NORMALIZE GOOGLE PLACE
        
-       CRITICAL:
-       
-       The `google` object contains the FULL Google object.
-       
-       We do not throw anything away.
+       NOTHING IMPORTANT IS REMOVED.
     ====================================================== */
 
-    function normalizeGooglePlace(
+    function normalizePlace(
         place
     ) {
 
@@ -864,18 +876,15 @@ export default async function handler(req, res) {
         }
 
 
-        const resourceName =
-            typeof place.name === "string"
-                ? place.name
-                : "";
+        const id =
+            getPlaceId(
+                place
+            );
 
 
-        const extractedPlaceId =
-            place.id ||
-            extractPlaceId(
-                resourceName
-            ) ||
-            "";
+        const location =
+            place.location ||
+            {};
 
 
         const photos =
@@ -890,40 +899,48 @@ export default async function handler(req, res) {
             );
 
 
-        const location =
-            place.location ||
-            {};
-
-
         return {
 
             /* =============================================
-               BOKKARA STANDARD FIELDS
+               IDENTIFICATION
             ============================================== */
 
             placeId:
-                extractedPlaceId,
+                id,
 
+            id:
+                id,
+
+
+            resourceName:
+                place.name ||
+                "",
+
+
+            /* =============================================
+               BASIC INFORMATION
+            ============================================== */
 
             name:
                 place.displayName?.text ||
                 "",
 
-
             displayName:
                 place.displayName ||
                 null,
-
 
             address:
                 place.formattedAddress ||
                 "",
 
-
             shortAddress:
                 place.shortFormattedAddress ||
                 "",
 
+
+            /* =============================================
+               LOCATION
+            ============================================== */
 
             latitude:
                 Number.isFinite(
@@ -935,7 +952,6 @@ export default async function handler(req, res) {
                         location.latitude
                     )
                     : null,
-
 
             longitude:
                 Number.isFinite(
@@ -949,31 +965,57 @@ export default async function handler(req, res) {
                     : null,
 
 
+            location:
+                place.location ||
+                null,
+
+
+            /* =============================================
+               RATINGS
+            ============================================== */
+
             rating:
                 place.rating ??
                 null,
-
 
             userRatingCount:
                 place.userRatingCount ??
                 null,
 
 
+            /* =============================================
+               REVIEWS
+            ============================================== */
+
             reviews,
 
 
+            reviewCount:
+                reviews.length,
+
+
+            /* =============================================
+               PHOTOS
+            ============================================== */
+
             photos,
 
+
+            photoCount:
+                photos.length,
+
+
+            /* =============================================
+               TYPES
+            ============================================== */
 
             primaryType:
                 place.primaryType ||
                 null,
 
-
             primaryTypeDisplayName:
                 place.primaryTypeDisplayName ||
                 null,
-
 
             types:
                 Array.isArray(
@@ -983,50 +1025,60 @@ export default async function handler(req, res) {
                     : [],
 
 
+            /* =============================================
+               BUSINESS
+            ============================================== */
+
             businessStatus:
                 place.businessStatus ||
                 null,
 
 
+            /* =============================================
+               CONTACT
+            ============================================== */
+
             phone:
                 place.nationalPhoneNumber ||
                 null,
-
 
             internationalPhone:
                 place.internationalPhoneNumber ||
                 null,
 
-
             website:
                 place.websiteUri ||
                 null,
-
 
             googleMapsUrl:
                 place.googleMapsUri ||
                 null,
 
 
+            /* =============================================
+               PRICE
+            ============================================== */
+
             priceLevel:
                 place.priceLevel ??
                 null,
-
 
             priceRange:
                 place.priceRange ??
                 null,
 
 
+            /* =============================================
+               HOURS
+            ============================================== */
+
             openNow:
                 place.currentOpeningHours?.openNow ??
                 null,
 
-
             openingHours:
                 place.regularOpeningHours ||
                 null,
-
 
             currentOpeningHours:
                 place.currentOpeningHours ||
@@ -1034,9 +1086,25 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               EVERYTHING ELSE GOOGLE RETURNS
+               EDITORIAL / SUMMARY
+            ============================================== */
+
+            editorialSummary:
+                place.editorialSummary ||
+                null,
+
+            generativeSummary:
+                place.generativeSummary ||
+                null,
+
+
+            /* =============================================
+               EVERYTHING GOOGLE RETURNED
                
-               This is intentionally preserved.
+               This is the important part.
+               
+               The complete Google object stays available
+               to the Shopify frontend.
             ============================================== */
 
             google: {
@@ -1050,6 +1118,140 @@ export default async function handler(req, res) {
             }
 
         };
+
+    }
+
+
+    /* =====================================================
+       ENRICH ONE SEARCH RESULT
+    ====================================================== */
+
+    async function enrichOnePlace(
+        searchPlace
+    ) {
+
+        const id =
+            getPlaceId(
+                searchPlace
+            );
+
+
+        if (!id) {
+
+            return normalizePlace(
+                searchPlace
+            );
+
+        }
+
+
+        try {
+
+            const details =
+                await getPlaceDetails(
+                    id
+                );
+
+
+            if (details) {
+
+                console.log(
+                    "BOKKARA DETAILS LOADED:",
+                    id,
+                    "photos:",
+                    Array.isArray(
+                        details.photos
+                    )
+                        ? details.photos.length
+                        : 0,
+                    "reviews:",
+                    Array.isArray(
+                        details.reviews
+                    )
+                        ? details.reviews.length
+                        : 0
+                );
+
+
+                return normalizePlace(
+                    details
+                );
+
+            }
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "BOKKARA DETAILS ENRICHMENT ERROR:",
+                id,
+                error.message
+            );
+
+        }
+
+
+        /* =============================================
+           NEVER LOSE THE SEARCH RESULT
+        ============================================== */
+
+        return normalizePlace(
+            searchPlace
+        );
+
+    }
+
+
+    /* =====================================================
+       ENRICH ALL PLACES
+       
+       Uses a small concurrency limit so we don't hammer
+       Google with dozens of simultaneous requests.
+    ====================================================== */
+
+    async function enrichPlaces(
+        searchPlaces
+    ) {
+
+        const results = [];
+
+
+        const concurrency =
+            5;
+
+
+        for (
+            let i = 0;
+            i < searchPlaces.length;
+            i += concurrency
+        ) {
+
+            const batch =
+                searchPlaces.slice(
+                    i,
+                    i + concurrency
+                );
+
+
+            const batchResults =
+                await Promise.all(
+
+                    batch.map(
+                        enrichOnePlace
+                    )
+
+                );
+
+
+            results.push(
+                ...batchResults
+            );
+
+        }
+
+
+        return results;
 
     }
 
@@ -1079,10 +1281,18 @@ export default async function handler(req, res) {
 
             const key =
                 place.placeId ||
+
                 (
-                    place.name +
+                    (
+                        place.name ||
+                        ""
+                    )
+                    +
                     "|" +
-                    place.address
+                    (
+                        place.address ||
+                        ""
+                    )
                 );
 
 
@@ -1108,141 +1318,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       FULL ENRICHMENT
-       
-       SEARCH RESULTS -> PLACE DETAILS
-       
-       This guarantees the frontend gets the full Google
-       Place object instead of relying only on search data.
-    ====================================================== */
-
-    async function enrichPlacesWithDetails(
-        searchPlaces
-    ) {
-
-        if (
-            !Array.isArray(searchPlaces) ||
-            searchPlaces.length === 0
-        ) {
-
-            return [];
-
-        }
-
-
-        console.log(
-            "BOKKARA ENRICHING",
-            searchPlaces.length,
-            "PLACES WITH FULL DETAILS"
-        );
-
-
-        const results =
-            await Promise.all(
-
-                searchPlaces.map(
-                    async (
-                        searchPlace,
-                        index
-                    ) => {
-
-                        try {
-
-                            const id =
-                                searchPlace?.id ||
-                                extractPlaceId(
-                                    searchPlace?.name
-                                );
-
-
-                            if (!id) {
-
-                                console.warn(
-                                    "BOKKARA PLACE HAS NO ID:",
-                                    index
-                                );
-
-
-                                return normalizeGooglePlace(
-                                    searchPlace
-                                );
-
-                            }
-
-
-                            const details =
-                                await getPlaceDetails(
-                                    id
-                                );
-
-
-                            if (details) {
-
-                                console.log(
-                                    "BOKKARA FULL DETAILS SUCCESS:",
-                                    id,
-                                    "photos:",
-                                    Array.isArray(
-                                        details.photos
-                                    )
-                                        ? details.photos.length
-                                        : 0,
-                                    "reviews:",
-                                    Array.isArray(
-                                        details.reviews
-                                    )
-                                        ? details.reviews.length
-                                        : 0
-                                );
-
-
-                                return normalizeGooglePlace(
-                                    details
-                                );
-
-                            }
-
-
-                            /* =================================
-                               FALLBACK
-                            ================================= */
-
-                            return normalizeGooglePlace(
-                                searchPlace
-                            );
-
-                        }
-
-                        catch (error) {
-
-                            console.error(
-                                "BOKKARA DETAIL ENRICHMENT FAILED:",
-                                index,
-                                error
-                            );
-
-
-                            return normalizeGooglePlace(
-                                searchPlace
-                            );
-
-                        }
-
-                    }
-                )
-
-            );
-
-
-        return results
-
-            .filter(Boolean);
-
-    }
-
-
-    /* =====================================================
-       PLACE DETAILS DIRECT REQUEST
+       DIRECT PLACE DETAILS
        
        /api/places/search?placeId=ChIJ...
     ====================================================== */
@@ -1279,7 +1355,7 @@ export default async function handler(req, res) {
 
 
             const place =
-                normalizeGooglePlace(
+                normalizePlace(
                     googlePlace
                 );
 
@@ -1296,10 +1372,6 @@ export default async function handler(req, res) {
                     place.placeId,
 
                 place,
-
-                /* =========================================
-                   COMPLETE ORIGINAL GOOGLE OBJECT
-                ========================================== */
 
                 google:
                     googlePlace
@@ -1343,6 +1415,10 @@ export default async function handler(req, res) {
 
     /* =====================================================
        TEXT SEARCH
+       
+       Example:
+       
+       /api/places/search?query=restaurants+in+Port+of+Spain
     ====================================================== */
 
     if (query) {
@@ -1360,6 +1436,10 @@ export default async function handler(req, res) {
             };
 
 
+            /* =============================================
+               PAGE TOKEN
+            ============================================== */
+
             if (pageToken) {
 
                 body.pageToken =
@@ -1367,6 +1447,10 @@ export default async function handler(req, res) {
 
             }
 
+
+            /* =============================================
+               LOCATION BIAS
+            ============================================== */
 
             if (hasLocation) {
 
@@ -1395,13 +1479,18 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               SEARCH GOOGLE
+               GOOGLE TEXT SEARCH
             ============================================== */
 
             const googleData =
-                await googleSearchRequest(
+                await googlePost(
+
                     TEXT_SEARCH_URL,
-                    body
+
+                    body,
+
+                    TEXT_SEARCH_FIELD_MASK
+
                 );
 
 
@@ -1414,18 +1503,24 @@ export default async function handler(req, res) {
 
 
             console.log(
-                "BOKKARA GOOGLE SEARCH RESULTS:",
+                "BOKKARA TEXT SEARCH FOUND:",
                 searchPlaces.length
             );
 
 
             /* =============================================
-               NOW GET FULL DETAILS FOR EVERY PLACE
+               FULL DETAILS
             ============================================== */
 
-            const places =
-                await enrichPlacesWithDetails(
+            const enriched =
+                await enrichPlaces(
                     searchPlaces
+                );
+
+
+            const places =
+                deduplicatePlaces(
+                    enriched
                 );
 
 
@@ -1475,15 +1570,11 @@ export default async function handler(req, res) {
                     null,
 
 
-                /* =========================================
-                   FULL ENRICHED RESULTS
-                ========================================== */
-
                 places,
 
 
                 /* =========================================
-                   ORIGINAL SEARCH RESPONSE
+                   ORIGINAL GOOGLE SEARCH RESPONSE
                 ========================================== */
 
                 google:
@@ -1496,8 +1587,19 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-                "BOKKARA TEXT SEARCH ERROR:",
+                "================================================="
+            );
+
+            console.error(
+                "BOKKARA TEXT SEARCH FAILED"
+            );
+
+            console.error(
                 error
+            );
+
+            console.error(
+                "================================================="
             );
 
 
@@ -1526,7 +1628,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY SEARCH REQUIRES LOCATION
+       CATEGORY SEARCH NEEDS LOCATION
     ====================================================== */
 
     if (!hasLocation) {
@@ -1563,7 +1665,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE NEARBY SEARCH
+       RUN NEARBY SEARCH FOR EACH TYPE
     ====================================================== */
 
     for (
@@ -1611,9 +1713,14 @@ export default async function handler(req, res) {
 
 
             const googleData =
-                await googleSearchRequest(
+                await googlePost(
+
                     NEARBY_SEARCH_URL,
-                    body
+
+                    body,
+
+                    NEARBY_SEARCH_FIELD_MASK
+
                 );
 
 
@@ -1627,7 +1734,7 @@ export default async function handler(req, res) {
             });
 
 
-            const googlePlaces =
+            const found =
                 Array.isArray(
                     googleData.places
                 )
@@ -1635,19 +1742,17 @@ export default async function handler(req, res) {
                     : [];
 
 
-            for (
-                const place of googlePlaces
-            ) {
+            console.log(
+                "BOKKARA NEARBY TYPE:",
+                type,
+                "FOUND:",
+                found.length
+            );
 
-                if (place) {
 
-                    allSearchPlaces.push(
-                        place
-                    );
-
-                }
-
-            }
+            allSearchPlaces.push(
+                ...found
+            );
 
         }
 
@@ -1655,7 +1760,7 @@ export default async function handler(req, res) {
 
             console.error(
 
-                "BOKKARA GOOGLE TYPE FAILED:",
+                "BOKKARA NEARBY SEARCH FAILED:",
 
                 type,
 
@@ -1669,58 +1774,79 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       DEDUPLICATE SEARCH RESULTS FIRST
+       DEDUPLICATE SEARCH RESULTS
+       
+       Do this BEFORE Details calls.
     ====================================================== */
 
+    const searchMap =
+        new Map();
+
+
+    for (
+        const searchPlace
+        of allSearchPlaces
+    ) {
+
+        const id =
+            getPlaceId(
+                searchPlace
+            );
+
+
+        if (
+            id &&
+            !searchMap.has(id)
+        ) {
+
+            searchMap.set(
+                id,
+                searchPlace
+            );
+
+        }
+
+    }
+
+
     const uniqueSearchPlaces =
-        deduplicatePlaces(
-
-            allSearchPlaces.map(
-                normalizeGooglePlace
-            )
-
-        ).map(
-            place => {
-
-                return {
-
-                    id:
-                        place.placeId,
-
-                    name:
-                        "places/" +
-                        place.placeId
-
-                };
-
-            }
-
+        Array.from(
+            searchMap.values()
         );
 
 
+    console.log(
+        "BOKKARA UNIQUE PLACES:",
+        uniqueSearchPlaces.length
+    );
+
+
     /* =====================================================
-       FULL DETAILS FOR EVERY PLACE
+       FULL DETAILS
     ====================================================== */
 
-    const places =
-        await enrichPlacesWithDetails(
+    const enrichedPlaces =
+        await enrichPlaces(
             uniqueSearchPlaces
         );
 
 
     /* =====================================================
-       LIMIT
+       FINAL DEDUPLICATION
     ====================================================== */
 
-    const limitedPlaces =
-        places.slice(
+    const places =
+        deduplicatePlaces(
+            enrichedPlaces
+        )
+        .slice(
             0,
             50
         );
 
 
     /* =====================================================
-       RETURN
+       RETURN CATEGORY RESULTS
     ====================================================== */
 
     return res.status(200).json({
@@ -1732,7 +1858,7 @@ export default async function handler(req, res) {
             "category_search",
 
         count:
-            limitedPlaces.length,
+            places.length,
 
         category:
             category,
@@ -1761,16 +1887,11 @@ export default async function handler(req, res) {
         },
 
 
-        /* ================================================
-           FULL PLACES
-        ================================================ */
-
-        places:
-            limitedPlaces,
+        places,
 
 
         /* ================================================
-           ORIGINAL GOOGLE SEARCH RESPONSES
+           ORIGINAL GOOGLE RESPONSES
         ================================================ */
 
         google:
