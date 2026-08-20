@@ -131,7 +131,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       LOCATION
+       LOCATION VALIDATION
     ====================================================== */
 
     const hasLocation =
@@ -144,7 +144,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       RADIUS
+       SAFE RADIUS
     ====================================================== */
 
     const safeRadius =
@@ -165,7 +165,7 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "BOKKARA PLACES REQUEST"
+        "BOKKARA PLACES SEARCH REQUEST"
     );
 
     console.log(
@@ -296,18 +296,6 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE FIELD MASK
-       
-       WE ARE REQUESTING EVERYTHING GOOGLE MAKES
-       AVAILABLE FOR THE OPERATION.
-       
-       Google supports "*" as the field mask.
-    ====================================================== */
-
-    const FIELD_MASK = "*";
-
-
-    /* =====================================================
        GOOGLE ENDPOINTS
     ====================================================== */
 
@@ -324,16 +312,41 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE REQUEST
+       IMPORTANT
+       
+       SEARCH + DETAILS BOTH REQUEST EVERYTHING.
+
+       Google supports "*" for the field mask.
+       
+       Search:
+       places.*
+       
+       Details:
+       *
     ====================================================== */
 
-    async function googleRequest(
+    const SEARCH_FIELD_MASK =
+        "places.*," +
+        "nextPageToken," +
+        "routingSummaries," +
+        "contextualContents";
+
+
+    const DETAILS_FIELD_MASK =
+        "*";
+
+
+    /* =====================================================
+       GOOGLE SEARCH REQUEST
+    ====================================================== */
+
+    async function googleSearchRequest(
         url,
         body
     ) {
 
         console.log(
-            "BOKKARA GOOGLE REQUEST:",
+            "BOKKARA GOOGLE SEARCH:",
             url
         );
 
@@ -358,7 +371,7 @@ export default async function handler(req, res) {
                             GOOGLE_API_KEY,
 
                         "X-Goog-FieldMask":
-                            FIELD_MASK
+                            SEARCH_FIELD_MASK
 
                     },
 
@@ -375,7 +388,7 @@ export default async function handler(req, res) {
             await response.text();
 
 
-        let data;
+        let data = {};
 
 
         try {
@@ -390,7 +403,7 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-                "BOKKARA GOOGLE INVALID JSON:",
+                "BOKKARA GOOGLE SEARCH INVALID JSON:",
                 text
             );
 
@@ -403,26 +416,25 @@ export default async function handler(req, res) {
 
 
         console.log(
-            "BOKKARA GOOGLE STATUS:",
+            "BOKKARA GOOGLE SEARCH STATUS:",
             response.status
         );
 
 
         if (!response.ok) {
 
-            const googleMessage =
-                data?.error?.message ||
-                "Unknown Google Places error.";
-
-
             console.error(
-                "BOKKARA GOOGLE ERROR:",
+                "BOKKARA GOOGLE SEARCH ERROR:",
                 data
             );
 
 
             throw new Error(
-                googleMessage
+
+                data?.error?.message ||
+
+                "Google Places search failed."
+
             );
 
         }
@@ -436,11 +448,10 @@ export default async function handler(req, res) {
     /* =====================================================
        GOOGLE PLACE DETAILS
        
-       Same backend.
+       THIS IS THE IMPORTANT PART.
        
-       Call:
-       
-       /api/places/search?placeId=GOOGLE_PLACE_ID
+       Every search result is sent back to Google Place
+       Details so we get the complete place object.
     ====================================================== */
 
     async function getPlaceDetails(
@@ -452,9 +463,7 @@ export default async function handler(req, res) {
             !id.trim()
         ) {
 
-            throw new Error(
-                "A valid Google Place ID is required."
-            );
+            return null;
 
         }
 
@@ -476,7 +485,7 @@ export default async function handler(req, res) {
 
 
         console.log(
-            "BOKKARA GOOGLE PLACE DETAILS:",
+            "BOKKARA FULL PLACE DETAILS:",
             cleanId
         );
 
@@ -498,7 +507,7 @@ export default async function handler(req, res) {
                             GOOGLE_API_KEY,
 
                         "X-Goog-FieldMask":
-                            FIELD_MASK
+                            DETAILS_FIELD_MASK
 
                     }
 
@@ -510,7 +519,7 @@ export default async function handler(req, res) {
             await response.text();
 
 
-        let data;
+        let data = {};
 
 
         try {
@@ -530,25 +539,19 @@ export default async function handler(req, res) {
             );
 
 
-            throw new Error(
-                "Google Places returned invalid JSON."
-            );
+            return null;
 
         }
 
 
         console.log(
             "BOKKARA DETAILS STATUS:",
-            response.status
+            response.status,
+            cleanId
         );
 
 
         if (!response.ok) {
-
-            const googleMessage =
-                data?.error?.message ||
-                "Unknown Google Places error.";
-
 
             console.error(
                 "BOKKARA DETAILS ERROR:",
@@ -556,9 +559,7 @@ export default async function handler(req, res) {
             );
 
 
-            throw new Error(
-                googleMessage
-            );
+            return null;
 
         }
 
@@ -569,18 +570,55 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
+       EXTRACT PLACE ID
+    ====================================================== */
+
+    function extractPlaceId(
+        resourceName
+    ) {
+
+        if (
+            typeof resourceName !== "string"
+        ) {
+
+            return "";
+
+        }
+
+
+        if (
+            resourceName.startsWith(
+                "places/"
+            )
+        ) {
+
+            return resourceName.substring(
+                "places/".length
+            );
+
+        }
+
+
+        return resourceName;
+
+    }
+
+
+    /* =====================================================
        PHOTO URL
        
-       Google returns photo resource names.
+       IMPORTANT:
        
-       We keep the Google photo information AND create
-       convenient URLs through the existing photo endpoint.
+       Google photo resource names are NOT normal image
+       URLs.
+       
+       They must be passed through Place Photo Media.
     ====================================================== */
 
     function createPhotoUrl(
         photoName,
-        width = 1200,
-        height = 1200
+        width = 1600,
+        height = 1600
     ) {
 
         if (
@@ -594,19 +632,27 @@ export default async function handler(req, res) {
 
 
         return (
+
             "https://api-places-search-js.vercel.app/api/places/photo" +
+
             "?name=" +
+
             encodeURIComponent(
                 photoName
             ) +
+
             "&width=" +
+
             encodeURIComponent(
                 width
             ) +
+
             "&height=" +
+
             encodeURIComponent(
                 height
             )
+
         );
 
     }
@@ -614,13 +660,6 @@ export default async function handler(req, res) {
 
     /* =====================================================
        ENRICH PHOTOS
-       
-       IMPORTANT:
-       
-       We DO NOT replace Google's photo data.
-       
-       We keep Google's complete photo object and add
-       convenient photoUrl / proxyUrl values.
     ====================================================== */
 
     function enrichPhotos(
@@ -636,63 +675,182 @@ export default async function handler(req, res) {
         }
 
 
-        return photos.map(
-            (
-                photo,
-                index
-            ) => {
+        return photos
 
-                if (!photo) {
+            .map(
+                (
+                    photo,
+                    index
+                ) => {
 
-                    return null;
+                    if (!photo) {
+
+                        return null;
+
+                    }
+
+
+                    const photoName =
+                        typeof photo.name === "string"
+                            ? photo.name
+                            : "";
+
+
+                    return {
+
+                        /* =================================
+                           ORIGINAL GOOGLE PHOTO DATA
+                        ================================= */
+
+                        ...photo,
+
+
+                        /* =================================
+                           BOKKARA CONVENIENCE FIELDS
+                        ================================= */
+
+                        index,
+
+
+                        photoUrl:
+                            createPhotoUrl(
+                                photoName,
+                                1600,
+                                1600
+                            ),
+
+
+                        thumbnailUrl:
+                            createPhotoUrl(
+                                photoName,
+                                800,
+                                800
+                            ),
+
+
+                        largeUrl:
+                            createPhotoUrl(
+                                photoName,
+                                2400,
+                                2400
+                            )
+
+                    };
 
                 }
+            )
 
-
-                const photoName =
-                    typeof photo.name === "string"
-                        ? photo.name
-                        : "";
-
-
-                return {
-
-                    ...photo,
-
-                    index,
-
-                    photoUrl:
-                        createPhotoUrl(
-                            photoName,
-                            1200,
-                            1200
-                        ),
-
-                    thumbnailUrl:
-                        createPhotoUrl(
-                            photoName,
-                            600,
-                            600
-                        )
-
-                };
-
-            }
-        )
-        .filter(Boolean);
+            .filter(Boolean);
 
     }
 
 
     /* =====================================================
-       NORMALIZE GOOGLE PLACE
+       ENRICH REVIEWS
        
-       VERY IMPORTANT:
+       DO NOT REMOVE ANY GOOGLE REVIEW DATA.
+    ====================================================== */
+
+    function enrichReviews(
+        reviews
+    ) {
+
+        if (
+            !Array.isArray(reviews)
+        ) {
+
+            return [];
+
+        }
+
+
+        return reviews
+
+            .map(
+                (
+                    review,
+                    index
+                ) => {
+
+                    if (!review) {
+
+                        return null;
+
+                    }
+
+
+                    return {
+
+                        ...review,
+
+                        index,
+
+                        author:
+                            review.authorAttribution ||
+                            null,
+
+                        authorName:
+                            review.authorAttribution?.displayName ||
+                            "",
+
+                        authorPhoto:
+                            review.authorAttribution?.photoUri ||
+                            "",
+
+                        authorUri:
+                            review.authorAttribution?.uri ||
+                            "",
+
+                        reviewText:
+                            review.text?.text ||
+                            "",
+
+                        reviewLanguage:
+                            review.text?.languageCode ||
+                            null,
+
+                        originalText:
+                            review.originalText?.text ||
+                            "",
+
+                        originalLanguage:
+                            review.originalText?.languageCode ||
+                            null,
+
+                        publishTime:
+                            review.publishTime ||
+                            null,
+
+                        relativePublishTimeDescription:
+                            review.relativePublishTimeDescription ||
+                            "",
+
+                        rating:
+                            review.rating ??
+                            null,
+
+                        googleMapsUri:
+                            review.googleMapsUri ||
+                            null
+
+                    };
+
+                }
+            )
+
+            .filter(Boolean);
+
+    }
+
+
+    /* =====================================================
+       NORMALIZE PLACE
        
-       `google` contains the COMPLETE ORIGINAL GOOGLE
-       PLACE OBJECT.
+       CRITICAL:
        
-       Nothing from Google is thrown away.
+       The `google` object contains the FULL Google object.
+       
+       We do not throw anything away.
     ====================================================== */
 
     function normalizeGooglePlace(
@@ -706,7 +864,7 @@ export default async function handler(req, res) {
         }
 
 
-        const placeResourceName =
+        const resourceName =
             typeof place.name === "string"
                 ? place.name
                 : "";
@@ -715,7 +873,7 @@ export default async function handler(req, res) {
         const extractedPlaceId =
             place.id ||
             extractPlaceId(
-                placeResourceName
+                resourceName
             ) ||
             "";
 
@@ -723,6 +881,12 @@ export default async function handler(req, res) {
         const photos =
             enrichPhotos(
                 place.photos
+            );
+
+
+        const reviews =
+            enrichReviews(
+                place.reviews
             );
 
 
@@ -734,7 +898,7 @@ export default async function handler(req, res) {
         return {
 
             /* =============================================
-               STANDARD BOKKARA FIELDS
+               BOKKARA STANDARD FIELDS
             ============================================== */
 
             placeId:
@@ -744,6 +908,11 @@ export default async function handler(req, res) {
             name:
                 place.displayName?.text ||
                 "",
+
+
+            displayName:
+                place.displayName ||
+                null,
 
 
             address:
@@ -790,8 +959,19 @@ export default async function handler(req, res) {
                 null,
 
 
+            reviews,
+
+
+            photos,
+
+
             primaryType:
                 place.primaryType ||
+                null,
+
+
+            primaryTypeDisplayName:
+                place.primaryTypeDisplayName ||
                 null,
 
 
@@ -843,20 +1023,29 @@ export default async function handler(req, res) {
                 null,
 
 
-            photos,
+            openingHours:
+                place.regularOpeningHours ||
+                null,
+
+
+            currentOpeningHours:
+                place.currentOpeningHours ||
+                null,
 
 
             /* =============================================
-               COMPLETE GOOGLE OBJECT
+               EVERYTHING ELSE GOOGLE RETURNS
                
-               NOTHING IS LOST.
+               This is intentionally preserved.
             ============================================== */
 
             google: {
 
                 ...place,
 
-                photos
+                photos,
+
+                reviews
 
             }
 
@@ -919,13 +1108,143 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PLACE DETAILS REQUEST
+       FULL ENRICHMENT
        
-       If frontend sends:
+       SEARCH RESULTS -> PLACE DETAILS
        
-       ?placeId=ChIJ...
+       This guarantees the frontend gets the full Google
+       Place object instead of relying only on search data.
+    ====================================================== */
+
+    async function enrichPlacesWithDetails(
+        searchPlaces
+    ) {
+
+        if (
+            !Array.isArray(searchPlaces) ||
+            searchPlaces.length === 0
+        ) {
+
+            return [];
+
+        }
+
+
+        console.log(
+            "BOKKARA ENRICHING",
+            searchPlaces.length,
+            "PLACES WITH FULL DETAILS"
+        );
+
+
+        const results =
+            await Promise.all(
+
+                searchPlaces.map(
+                    async (
+                        searchPlace,
+                        index
+                    ) => {
+
+                        try {
+
+                            const id =
+                                searchPlace?.id ||
+                                extractPlaceId(
+                                    searchPlace?.name
+                                );
+
+
+                            if (!id) {
+
+                                console.warn(
+                                    "BOKKARA PLACE HAS NO ID:",
+                                    index
+                                );
+
+
+                                return normalizeGooglePlace(
+                                    searchPlace
+                                );
+
+                            }
+
+
+                            const details =
+                                await getPlaceDetails(
+                                    id
+                                );
+
+
+                            if (details) {
+
+                                console.log(
+                                    "BOKKARA FULL DETAILS SUCCESS:",
+                                    id,
+                                    "photos:",
+                                    Array.isArray(
+                                        details.photos
+                                    )
+                                        ? details.photos.length
+                                        : 0,
+                                    "reviews:",
+                                    Array.isArray(
+                                        details.reviews
+                                    )
+                                        ? details.reviews.length
+                                        : 0
+                                );
+
+
+                                return normalizeGooglePlace(
+                                    details
+                                );
+
+                            }
+
+
+                            /* =================================
+                               FALLBACK
+                            ================================= */
+
+                            return normalizeGooglePlace(
+                                searchPlace
+                            );
+
+                        }
+
+                        catch (error) {
+
+                            console.error(
+                                "BOKKARA DETAIL ENRICHMENT FAILED:",
+                                index,
+                                error
+                            );
+
+
+                            return normalizeGooglePlace(
+                                searchPlace
+                            );
+
+                        }
+
+                    }
+                )
+
+            );
+
+
+        return results
+
+            .filter(Boolean);
+
+    }
+
+
+    /* =====================================================
+       PLACE DETAILS DIRECT REQUEST
        
-       return the complete Google Place.
+       /api/places/search?placeId=ChIJ...
     ====================================================== */
 
     if (placeId) {
@@ -938,18 +1257,15 @@ export default async function handler(req, res) {
                 );
 
 
-            const place =
-                normalizeGooglePlace(
-                    googlePlace
-                );
-
-
-            if (!place) {
+            if (!googlePlace) {
 
                 return res.status(404).json({
 
                     success:
                         false,
+
+                    type:
+                        "place_details",
 
                     error:
                         "Google Place was not found.",
@@ -960,6 +1276,12 @@ export default async function handler(req, res) {
                 });
 
             }
+
+
+            const place =
+                normalizeGooglePlace(
+                    googlePlace
+                );
 
 
             return res.status(200).json({
@@ -974,6 +1296,10 @@ export default async function handler(req, res) {
                     place.placeId,
 
                 place,
+
+                /* =========================================
+                   COMPLETE ORIGINAL GOOGLE OBJECT
+                ========================================== */
 
                 google:
                     googlePlace
@@ -1034,10 +1360,6 @@ export default async function handler(req, res) {
             };
 
 
-            /* =============================================
-               PAGE TOKEN
-            ============================================== */
-
             if (pageToken) {
 
                 body.pageToken =
@@ -1045,10 +1367,6 @@ export default async function handler(req, res) {
 
             }
 
-
-            /* =============================================
-               LOCATION BIAS
-            ============================================== */
 
             if (hasLocation) {
 
@@ -1076,14 +1394,18 @@ export default async function handler(req, res) {
             }
 
 
+            /* =============================================
+               SEARCH GOOGLE
+            ============================================== */
+
             const googleData =
-                await googleRequest(
+                await googleSearchRequest(
                     TEXT_SEARCH_URL,
                     body
                 );
 
 
-            const googlePlaces =
+            const searchPlaces =
                 Array.isArray(
                     googleData.places
                 )
@@ -1091,12 +1413,20 @@ export default async function handler(req, res) {
                     : [];
 
 
+            console.log(
+                "BOKKARA GOOGLE SEARCH RESULTS:",
+                searchPlaces.length
+            );
+
+
+            /* =============================================
+               NOW GET FULL DETAILS FOR EVERY PLACE
+            ============================================== */
+
             const places =
-                googlePlaces
-                    .map(
-                        normalizeGooglePlace
-                    )
-                    .filter(Boolean);
+                await enrichPlacesWithDetails(
+                    searchPlaces
+                );
 
 
             return res.status(200).json({
@@ -1139,16 +1469,21 @@ export default async function handler(req, res) {
                         }
                         : null,
 
+
                 nextPageToken:
                     googleData.nextPageToken ||
                     null,
 
-                places,
 
                 /* =========================================
-                   ORIGINAL GOOGLE RESPONSE
-                   
-                   NOTHING LOST.
+                   FULL ENRICHED RESULTS
+                ========================================== */
+
+                places,
+
+
+                /* =========================================
+                   ORIGINAL SEARCH RESPONSE
                 ========================================== */
 
                 google:
@@ -1221,14 +1556,14 @@ export default async function handler(req, res) {
        CATEGORY SEARCH
     ====================================================== */
 
-    const allPlaces = [];
+    const allSearchPlaces = [];
 
 
     const googleResponses = [];
 
 
     /* =====================================================
-       RUN GOOGLE NEARBY SEARCH
+       GOOGLE NEARBY SEARCH
     ====================================================== */
 
     for (
@@ -1276,7 +1611,7 @@ export default async function handler(req, res) {
 
 
             const googleData =
-                await googleRequest(
+                await googleSearchRequest(
                     NEARBY_SEARCH_URL,
                     body
                 );
@@ -1304,16 +1639,10 @@ export default async function handler(req, res) {
                 const place of googlePlaces
             ) {
 
-                const normalized =
-                    normalizeGooglePlace(
+                if (place) {
+
+                    allSearchPlaces.push(
                         place
-                    );
-
-
-                if (normalized) {
-
-                    allPlaces.push(
-                        normalized
                     );
 
                 }
@@ -1340,12 +1669,42 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       DEDUPLICATE
+       DEDUPLICATE SEARCH RESULTS FIRST
     ====================================================== */
 
-    let places =
+    const uniqueSearchPlaces =
         deduplicatePlaces(
-            allPlaces
+
+            allSearchPlaces.map(
+                normalizeGooglePlace
+            )
+
+        ).map(
+            place => {
+
+                return {
+
+                    id:
+                        place.placeId,
+
+                    name:
+                        "places/" +
+                        place.placeId
+
+                };
+
+            }
+
+        );
+
+
+    /* =====================================================
+       FULL DETAILS FOR EVERY PLACE
+    ====================================================== */
+
+    const places =
+        await enrichPlacesWithDetails(
+            uniqueSearchPlaces
         );
 
 
@@ -1353,7 +1712,7 @@ export default async function handler(req, res) {
        LIMIT
     ====================================================== */
 
-    places =
+    const limitedPlaces =
         places.slice(
             0,
             50
@@ -1373,7 +1732,7 @@ export default async function handler(req, res) {
             "category_search",
 
         count:
-            places.length,
+            limitedPlaces.length,
 
         category:
             category,
@@ -1401,57 +1760,22 @@ export default async function handler(req, res) {
 
         },
 
-        places,
 
         /* ================================================
-           GOOGLE RESPONSES
-           
-           Every Google response is also returned.
-           
-           This means if Google adds something that our
-           convenience normalization doesn't explicitly
-           understand, your frontend still has access to it.
+           FULL PLACES
+        ================================================ */
+
+        places:
+            limitedPlaces,
+
+
+        /* ================================================
+           ORIGINAL GOOGLE SEARCH RESPONSES
         ================================================ */
 
         google:
             googleResponses
 
     });
-
-}
-
-
-/* =========================================================
-   EXTRACT PLACE ID
-========================================================= */
-
-function extractPlaceId(
-    resourceName
-) {
-
-    if (
-        typeof resourceName !==
-        "string"
-    ) {
-
-        return "";
-
-    }
-
-
-    if (
-        resourceName.startsWith(
-            "places/"
-        )
-    ) {
-
-        return resourceName.substring(
-            "places/".length
-        );
-
-    }
-
-
-    return resourceName;
 
 }
