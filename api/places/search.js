@@ -149,32 +149,41 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PHOTO PROXY
+       PHOTO REQUEST DETECTION
        
-       IMPORTANT:
-       
-       This MUST happen before the normal search logic.
-       
-       Shopify requests:
-       
-       /api/places/search?name=...
-       
-       OR the generated photoUrl:
-       
+       Supports BOTH:
+
        /api/places/photo?name=...
        
-       This backend proxies the image directly from
-       Google Places Photo Media.
+       AND
+
+       /api/places/search?name=...&photo=1
     ====================================================== */
 
-    if (
-        photoName &&
+    const isPhotoRequest =
+        !!photoName &&
         (
             req.query.photo === "1" ||
             req.query.media === "1" ||
-            req.url?.includes("/photo")
-        )
-    ) {
+            req.url?.includes("/api/places/photo")
+        );
+
+
+    /* =====================================================
+       PHOTO PROXY
+       
+       GOOGLE PLACES PHOTO (NEW)
+       
+       Google photo resource:
+
+       places/PLACE_ID/photos/PHOTO_REFERENCE
+       
+       Media endpoint:
+
+       places/PLACE_ID/photos/PHOTO_REFERENCE/media
+    ====================================================== */
+
+    if (isPhotoRequest) {
 
         try {
 
@@ -183,7 +192,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               NORMALIZE PHOTO NAME
+               NORMALIZE FULL GOOGLE URL
             ============================================== */
 
             if (
@@ -200,6 +209,10 @@ export default async function handler(req, res) {
 
             }
 
+
+            /* =============================================
+               NORMALIZE /v1/
+            ============================================== */
 
             if (
                 cleanPhotoName.startsWith(
@@ -225,9 +238,27 @@ export default async function handler(req, res) {
             }
 
 
+            /* =============================================
+               REMOVE /media IF FRONTEND SENT IT
+            ============================================== */
+
+            cleanPhotoName =
+                cleanPhotoName.replace(
+                    /\/media\/?$/,
+                    ""
+                );
+
+
+            /* =============================================
+               VALIDATE PHOTO RESOURCE
+            ============================================== */
+
             if (
                 !cleanPhotoName.startsWith(
                     "places/"
+                ) ||
+                !cleanPhotoName.includes(
+                    "/photos/"
                 )
             ) {
 
@@ -243,7 +274,10 @@ export default async function handler(req, res) {
                         false,
 
                     error:
-                        "Invalid Google Places photo name."
+                        "Invalid Google Places photo name.",
+
+                    photoName:
+                        cleanPhotoName
 
                 });
 
@@ -313,17 +347,17 @@ export default async function handler(req, res) {
             );
 
             console.log(
-                "Photo:",
+                "PHOTO:",
                 cleanPhotoName
             );
 
             console.log(
-                "Width:",
+                "WIDTH:",
                 width
             );
 
             console.log(
-                "Height:",
+                "HEIGHT:",
                 height
             );
 
@@ -333,7 +367,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               FETCH PHOTO FROM GOOGLE
+               FETCH PHOTO
             ============================================== */
 
             const photoResponse =
@@ -346,7 +380,7 @@ export default async function handler(req, res) {
 
                         headers: {
 
-                            "Accept":
+                            Accept:
                                 "image/*"
 
                         },
@@ -363,6 +397,10 @@ export default async function handler(req, res) {
                 photoResponse.status
             );
 
+
+            /* =============================================
+               GOOGLE ERROR
+            ============================================== */
 
             if (!photoResponse.ok) {
 
@@ -388,7 +426,10 @@ export default async function handler(req, res) {
 
                     details:
                         errorText ||
-                        "Unknown Google photo error."
+                        "Unknown Google photo error.",
+
+                    photoName:
+                        cleanPhotoName
 
                 });
 
@@ -396,7 +437,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               GET IMAGE DATA
+               IMAGE BUFFER
             ============================================== */
 
             const imageBuffer =
@@ -413,7 +454,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               CACHE IMAGE
+               IMAGE HEADERS
             ============================================== */
 
             res.setHeader(
@@ -430,19 +471,25 @@ export default async function handler(req, res) {
 
             res.setHeader(
                 "Cache-Control",
-                "public, max-age=86400, s-maxage=31536000, stale-while-revalidate=86400"
+                "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400"
             );
 
 
             res.setHeader(
                 "CDN-Cache-Control",
-                "public, max-age=31536000"
+                "public, max-age=86400"
             );
 
 
             res.setHeader(
                 "Vercel-CDN-Cache-Control",
-                "public, max-age=31536000"
+                "public, max-age=86400"
+            );
+
+
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
             );
 
 
@@ -518,32 +565,32 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "query:",
+        "QUERY:",
         query
     );
 
     console.log(
-        "placeId:",
+        "PLACE ID:",
         placeId
     );
 
     console.log(
-        "category:",
+        "CATEGORY:",
         category
     );
 
     console.log(
-        "latitude:",
+        "LATITUDE:",
         latitude
     );
 
     console.log(
-        "longitude:",
+        "LONGITUDE:",
         longitude
     );
 
     console.log(
-        "radius:",
+        "RADIUS:",
         safeRadius
     );
 
@@ -649,19 +696,30 @@ export default async function handler(req, res) {
 
 
     const DETAILS_BASE_URL =
-        "https://places.googleapis.com/v1/";
+        "https://places.googleapis.com/v1/places/";
 
 
     /* =====================================================
        FIELD MASKS
+       
+       PHOTOS ARE EXPLICITLY REQUESTED.
+       
+       This is important.
     ====================================================== */
 
     const TEXT_SEARCH_FIELD_MASK =
-        "places.*,nextPageToken";
+        [
+            "places.*",
+            "places.photos",
+            "nextPageToken"
+        ].join(",");
 
 
     const NEARBY_SEARCH_FIELD_MASK =
-        "places.*";
+        [
+            "places.*",
+            "places.photos"
+        ].join(",");
 
 
     const DETAILS_FIELD_MASK =
@@ -669,7 +727,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       GOOGLE POST REQUEST
+       GOOGLE POST
     ====================================================== */
 
     async function googlePost(
@@ -807,7 +865,6 @@ export default async function handler(req, res) {
 
         const url =
             DETAILS_BASE_URL +
-            "places/" +
             encodeURIComponent(
                 cleanId
             );
@@ -898,7 +955,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       PHOTO PROXY URL
+       PHOTO PROXY BASE URL
     ====================================================== */
 
     function createPhotoUrl(
@@ -919,15 +976,13 @@ export default async function handler(req, res) {
 
         return (
 
-            "https://api-places-search-js.vercel.app/api/places/search" +
+            "https://api-places-search-js.vercel.app/api/places/photo" +
 
             "?name=" +
 
             encodeURIComponent(
                 photoName
             ) +
-
-            "&photo=1" +
 
             "&width=" +
 
@@ -948,6 +1003,10 @@ export default async function handler(req, res) {
 
     /* =====================================================
        ENRICH PHOTOS
+       
+       PRESERVES EVERY GOOGLE PHOTO.
+       
+       Google can return up to 10 photos.
     ====================================================== */
 
     function enrichPhotos(
@@ -961,6 +1020,12 @@ export default async function handler(req, res) {
             return [];
 
         }
+
+
+        console.log(
+            "BOKKARA PHOTOS RECEIVED:",
+            photos.length
+        );
 
 
         return photos
@@ -980,7 +1045,7 @@ export default async function handler(req, res) {
 
                     const photoName =
                         typeof photo.name === "string"
-                            ? photo.name
+                            ? photo.name.trim()
                             : "";
 
 
@@ -999,6 +1064,9 @@ export default async function handler(req, res) {
                                 "",
 
                             largeUrl:
+                                "",
+
+                            mediaUrl:
                                 ""
 
                         };
@@ -1006,32 +1074,121 @@ export default async function handler(req, res) {
                     }
 
 
+                    const photoUrl =
+                        createPhotoUrl(
+                            photoName,
+                            1600,
+                            1600
+                        );
+
+
+                    const thumbnailUrl =
+                        createPhotoUrl(
+                            photoName,
+                            600,
+                            600
+                        );
+
+
+                    const largeUrl =
+                        createPhotoUrl(
+                            photoName,
+                            2400,
+                            2400
+                        );
+
+
+                    const mediaUrl =
+                        createPhotoUrl(
+                            photoName,
+                            4800,
+                            4800
+                        );
+
+
                     return {
+
+                        /* =================================
+                           ORIGINAL GOOGLE PHOTO
+                        ================================== */
 
                         ...photo,
 
+
+                        /* =================================
+                           OUR INDEX
+                        ================================== */
+
                         index,
 
-                        photoUrl:
-                            createPhotoUrl(
-                                photoName,
-                                1600,
-                                1600
-                            ),
 
-                        thumbnailUrl:
-                            createPhotoUrl(
-                                photoName,
-                                600,
-                                600
-                            ),
+                        /* =================================
+                           GOOGLE RESOURCE NAME
+                        ================================== */
 
-                        largeUrl:
-                            createPhotoUrl(
-                                photoName,
-                                2400,
-                                2400
+                        name:
+                            photoName,
+
+
+                        resourceName:
+                            photoName,
+
+
+                        /* =================================
+                           WORKING IMAGE URLS
+                        ================================== */
+
+                        photoUrl,
+
+                        thumbnailUrl,
+
+                        largeUrl,
+
+                        mediaUrl,
+
+
+                        /* =================================
+                           DIMENSIONS
+                        ================================== */
+
+                        width:
+                            photo.widthPx ||
+                            null,
+
+                        height:
+                            photo.heightPx ||
+                            null,
+
+
+                        widthPx:
+                            photo.widthPx ||
+                            null,
+
+                        heightPx:
+                            photo.heightPx ||
+                            null,
+
+
+                        /* =================================
+                           ATTRIBUTIONS
+                        ================================== */
+
+                        authorAttributions:
+                            Array.isArray(
+                                photo.authorAttributions
                             )
+                                ? photo.authorAttributions
+                                : [],
+
+
+                        googleMapsUri:
+                            photo.googleMapsUri ||
+                            null,
+
+
+                        flagContentUri:
+                            photo.flagContentUri ||
+                            null
 
                     };
 
@@ -1145,7 +1302,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       NORMALIZE GOOGLE PLACE
+       NORMALIZE PLACE
     ====================================================== */
 
     function normalizePlace(
@@ -1170,16 +1327,33 @@ export default async function handler(req, res) {
             {};
 
 
+        /* =============================================
+           PHOTOS
+        ============================================== */
+
         const photos =
             enrichPhotos(
                 place.photos
             );
 
 
+        /* =============================================
+           REVIEWS
+        ============================================== */
+
         const reviews =
             enrichReviews(
                 place.reviews
             );
+
+
+        console.log(
+            "BOKKARA NORMALIZE:",
+            place.displayName?.text ||
+            "",
+            "PHOTO COUNT:",
+            photos.length
+        );
 
 
         return {
@@ -1283,7 +1457,11 @@ export default async function handler(req, res) {
             photoCount:
                 photos.length,
 
-            /* First photo convenience fields */
+
+            /* =============================================
+               FIRST PHOTO CONVENIENCE
+            ============================================== */
+
             photoUrl:
                 photos[0]?.photoUrl ||
                 "",
@@ -1295,6 +1473,39 @@ export default async function handler(req, res) {
             largePhotoUrl:
                 photos[0]?.largeUrl ||
                 "",
+
+
+            /* =============================================
+               ALL PHOTO URLS
+               
+               Convenient for frontend galleries.
+            ============================================== */
+
+            photoUrls:
+                photos
+                    .map(
+                        photo =>
+                            photo.photoUrl
+                    )
+                    .filter(Boolean),
+
+
+            thumbnailUrls:
+                photos
+                    .map(
+                        photo =>
+                            photo.thumbnailUrl
+                    )
+                    .filter(Boolean),
+
+
+            largePhotoUrls:
+                photos
+                    .map(
+                        photo =>
+                            photo.largeUrl
+                    )
+                    .filter(Boolean),
 
 
             /* =============================================
@@ -1378,7 +1589,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               EDITORIAL / SUMMARY
+               EDITORIAL
             ============================================== */
 
             editorialSummary:
@@ -1520,14 +1731,20 @@ export default async function handler(req, res) {
 
                 console.log(
                     "BOKKARA DETAILS LOADED:",
-                    id,
-                    "photos:",
+                    id
+                );
+
+                console.log(
+                    "PHOTOS:",
                     Array.isArray(
                         details.photos
                     )
                         ? details.photos.length
-                        : 0,
-                    "reviews:",
+                        : 0
+                );
+
+                console.log(
+                    "REVIEWS:",
                     Array.isArray(
                         details.reviews
                     )
@@ -1554,6 +1771,10 @@ export default async function handler(req, res) {
 
         }
 
+
+        /* =============================================
+           FALLBACK TO SEARCH RESULT
+        ============================================== */
 
         return normalizePlace(
             searchPlace
@@ -1788,6 +2009,10 @@ export default async function handler(req, res) {
             };
 
 
+            /* =============================================
+               PAGE TOKEN
+            ============================================== */
+
             if (pageToken) {
 
                 body.pageToken =
@@ -1795,6 +2020,10 @@ export default async function handler(req, res) {
 
             }
 
+
+            /* =============================================
+               LOCATION BIAS
+            ============================================== */
 
             if (hasLocation) {
 
@@ -1822,6 +2051,10 @@ export default async function handler(req, res) {
             }
 
 
+            /* =============================================
+               GOOGLE TEXT SEARCH
+            ============================================== */
+
             const googleData =
                 await googlePost(
 
@@ -1847,6 +2080,33 @@ export default async function handler(req, res) {
                 searchPlaces.length
             );
 
+
+            /* =============================================
+               LOG PHOTO COUNTS BEFORE DETAILS
+            ============================================== */
+
+            searchPlaces.forEach(
+                (p, index) => {
+
+                    console.log(
+                        "SEARCH PLACE",
+                        index,
+                        p.displayName?.text,
+                        "PHOTOS:",
+                        Array.isArray(
+                            p.photos
+                        )
+                            ? p.photos.length
+                            : 0
+                    );
+
+                }
+            );
+
+
+            /* =============================================
+               FULL DETAILS
+            ============================================== */
 
             const enriched =
                 await enrichPlaces(
@@ -1900,11 +2160,14 @@ export default async function handler(req, res) {
                         }
                         : null,
 
+
                 nextPageToken:
                     googleData.nextPageToken ||
                     null,
 
+
                 places,
+
 
                 google:
                     googleData
@@ -1957,7 +2220,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       CATEGORY SEARCH NEEDS LOCATION
+       CATEGORY SEARCH REQUIRES LOCATION
     ====================================================== */
 
     if (!hasLocation) {
@@ -2076,6 +2339,25 @@ export default async function handler(req, res) {
                 type,
                 "FOUND:",
                 found.length
+            );
+
+
+            found.forEach(
+                (p, index) => {
+
+                    console.log(
+                        "NEARBY PLACE",
+                        index,
+                        p.displayName?.text,
+                        "PHOTOS:",
+                        Array.isArray(
+                            p.photos
+                        )
+                            ? p.photos.length
+                            : 0
+                    );
+
+                }
             );
 
 
