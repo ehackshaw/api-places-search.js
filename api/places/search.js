@@ -149,38 +149,40 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
+       REQUEST PATH
+    ====================================================== */
+
+    const requestPath =
+        typeof req.url === "string"
+            ? req.url.split("?")[0]
+            : "";
+
+
+    /* =====================================================
        PHOTO REQUEST DETECTION
        
        Supports BOTH:
-
+       
        /api/places/photo?name=...
        
        AND
-
+       
        /api/places/search?name=...&photo=1
     ====================================================== */
 
     const isPhotoRequest =
-        !!photoName &&
+        Boolean(photoName) &&
         (
             req.query.photo === "1" ||
             req.query.media === "1" ||
-            req.url?.includes("/api/places/photo")
+            requestPath.endsWith("/photo")
         );
 
 
     /* =====================================================
        PHOTO PROXY
        
-       GOOGLE PLACES PHOTO (NEW)
-       
-       Google photo resource:
-
-       places/PLACE_ID/photos/PHOTO_REFERENCE
-       
-       Media endpoint:
-
-       places/PLACE_ID/photos/PHOTO_REFERENCE/media
+       THIS MUST RUN BEFORE SEARCH / DETAILS.
     ====================================================== */
 
     if (isPhotoRequest) {
@@ -191,74 +193,78 @@ export default async function handler(req, res) {
                 photoName.trim();
 
 
+            console.log(
+                "================================================="
+            );
+
+            console.log(
+                "BOKKARA PHOTO PROXY REQUEST"
+            );
+
+            console.log(
+                "Original photo name:",
+                cleanPhotoName
+            );
+
+
+            /* =============================================
+               DECODE IF DOUBLE ENCODED
+            ============================================== */
+
+            try {
+
+                const decoded =
+                    decodeURIComponent(
+                        cleanPhotoName
+                    );
+
+                if (decoded) {
+
+                    cleanPhotoName =
+                        decoded;
+
+                }
+
+            }
+
+            catch (error) {
+
+                /* Ignore decoding errors */
+
+            }
+
+
             /* =============================================
                NORMALIZE FULL GOOGLE URL
             ============================================== */
 
-            if (
-                cleanPhotoName.startsWith(
-                    "https://places.googleapis.com/v1/"
-                )
-            ) {
-
-                cleanPhotoName =
-                    cleanPhotoName.replace(
-                        "https://places.googleapis.com/v1/",
+            cleanPhotoName =
+                cleanPhotoName
+                    .replace(
+                        /^https:\/\/places\.googleapis\.com\/v1\//i,
+                        ""
+                    )
+                    .replace(
+                        /^https:\/\/places\.googleapis\.com\//i,
+                        ""
+                    )
+                    .replace(
+                        /^\/v1\//i,
+                        ""
+                    )
+                    .replace(
+                        /^v1\//i,
                         ""
                     );
 
-            }
-
 
             /* =============================================
-               NORMALIZE /v1/
-            ============================================== */
-
-            if (
-                cleanPhotoName.startsWith(
-                    "/v1/"
-                )
-            ) {
-
-                cleanPhotoName =
-                    cleanPhotoName.substring(4);
-
-            }
-
-
-            if (
-                cleanPhotoName.startsWith(
-                    "v1/"
-                )
-            ) {
-
-                cleanPhotoName =
-                    cleanPhotoName.substring(3);
-
-            }
-
-
-            /* =============================================
-               REMOVE /media IF FRONTEND SENT IT
-            ============================================== */
-
-            cleanPhotoName =
-                cleanPhotoName.replace(
-                    /\/media\/?$/,
-                    ""
-                );
-
-
-            /* =============================================
-               VALIDATE PHOTO RESOURCE
+               NORMALIZE GOOGLE PHOTO NAME
             ============================================== */
 
             if (
                 !cleanPhotoName.startsWith(
                     "places/"
-                ) ||
-                !cleanPhotoName.includes(
-                    "/photos/"
                 )
             ) {
 
@@ -285,7 +291,39 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               SAFE DIMENSIONS
+               VERIFY IT IS ACTUALLY A PHOTO RESOURCE
+            ============================================== */
+
+            if (
+                !cleanPhotoName.includes(
+                    "/photos/"
+                )
+            ) {
+
+                console.error(
+                    "BOKKARA INVALID PHOTO RESOURCE:",
+                    cleanPhotoName
+                );
+
+
+                return res.status(400).json({
+
+                    success:
+                        false,
+
+                    error:
+                        "Invalid Google Places photo resource.",
+
+                    photoName:
+                        cleanPhotoName
+
+                });
+
+            }
+
+
+            /* =============================================
+               SAFE IMAGE DIMENSIONS
             ============================================== */
 
             const width =
@@ -339,35 +377,16 @@ export default async function handler(req, res) {
 
 
             console.log(
-                "================================================="
-            );
-
-            console.log(
-                "BOKKARA PHOTO REQUEST"
-            );
-
-            console.log(
-                "PHOTO:",
-                cleanPhotoName
-            );
-
-            console.log(
-                "WIDTH:",
-                width
-            );
-
-            console.log(
-                "HEIGHT:",
-                height
-            );
-
-            console.log(
-                "================================================="
+                "Google photo URL:",
+                googlePhotoUrl.replace(
+                    GOOGLE_API_KEY,
+                    "[HIDDEN]"
+                )
             );
 
 
             /* =============================================
-               FETCH PHOTO
+               REQUEST GOOGLE PHOTO
             ============================================== */
 
             const photoResponse =
@@ -380,8 +399,8 @@ export default async function handler(req, res) {
 
                         headers: {
 
-                            Accept:
-                                "image/*"
+                            "Accept":
+                                "image/avif,image/webp,image/jpeg,image/*,*/*"
 
                         },
 
@@ -399,7 +418,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               GOOGLE ERROR
+               GOOGLE PHOTO FAILED
             ============================================== */
 
             if (!photoResponse.ok) {
@@ -426,10 +445,7 @@ export default async function handler(req, res) {
 
                     details:
                         errorText ||
-                        "Unknown Google photo error.",
-
-                    photoName:
-                        cleanPhotoName
+                        "Unknown Google photo error."
 
                 });
 
@@ -437,14 +453,40 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               IMAGE BUFFER
+               GET IMAGE
             ============================================== */
+
+            const imageArrayBuffer =
+                await photoResponse.arrayBuffer();
+
 
             const imageBuffer =
                 Buffer.from(
-                    await photoResponse.arrayBuffer()
+                    imageArrayBuffer
                 );
 
+
+            if (
+                !imageBuffer ||
+                imageBuffer.length === 0
+            ) {
+
+                return res.status(502).json({
+
+                    success:
+                        false,
+
+                    error:
+                        "Google returned an empty photo."
+
+                });
+
+            }
+
+
+            /* =============================================
+               CONTENT TYPE
+            ============================================== */
 
             const contentType =
                 photoResponse.headers.get(
@@ -454,7 +496,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               IMAGE HEADERS
+               IMAGE RESPONSE HEADERS
             ============================================== */
 
             res.setHeader(
@@ -471,25 +513,32 @@ export default async function handler(req, res) {
 
             res.setHeader(
                 "Cache-Control",
-                "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400"
+                "public, max-age=86400, s-maxage=31536000, stale-while-revalidate=86400"
             );
 
 
             res.setHeader(
                 "CDN-Cache-Control",
-                "public, max-age=86400"
+                "public, max-age=31536000"
             );
 
 
             res.setHeader(
                 "Vercel-CDN-Cache-Control",
-                "public, max-age=86400"
+                "public, max-age=31536000"
             );
 
 
-            res.setHeader(
-                "Access-Control-Allow-Origin",
-                "*"
+            console.log(
+                "BOKKARA PHOTO SUCCESS:",
+                cleanPhotoName,
+                imageBuffer.length,
+                "bytes"
+            );
+
+
+            console.log(
+                "================================================="
             );
 
 
@@ -565,32 +614,32 @@ export default async function handler(req, res) {
     );
 
     console.log(
-        "QUERY:",
+        "query:",
         query
     );
 
     console.log(
-        "PLACE ID:",
+        "placeId:",
         placeId
     );
 
     console.log(
-        "CATEGORY:",
+        "category:",
         category
     );
 
     console.log(
-        "LATITUDE:",
+        "latitude:",
         latitude
     );
 
     console.log(
-        "LONGITUDE:",
+        "longitude:",
         longitude
     );
 
     console.log(
-        "RADIUS:",
+        "radius:",
         safeRadius
     );
 
@@ -696,30 +745,22 @@ export default async function handler(req, res) {
 
 
     const DETAILS_BASE_URL =
-        "https://places.googleapis.com/v1/places/";
+        "https://places.googleapis.com/v1/";
 
 
     /* =====================================================
        FIELD MASKS
        
-       PHOTOS ARE EXPLICITLY REQUESTED.
-       
-       This is important.
+       places.* is intentional.
+       We want ALL available Google fields.
     ====================================================== */
 
     const TEXT_SEARCH_FIELD_MASK =
-        [
-            "places.*",
-            "places.photos",
-            "nextPageToken"
-        ].join(",");
+        "places.*,nextPageToken";
 
 
     const NEARBY_SEARCH_FIELD_MASK =
-        [
-            "places.*",
-            "places.photos"
-        ].join(",");
+        "places.*";
 
 
     const DETAILS_FIELD_MASK =
@@ -735,12 +776,6 @@ export default async function handler(req, res) {
         body,
         fieldMask
     ) {
-
-        console.log(
-            "BOKKARA GOOGLE POST:",
-            url
-        );
-
 
         const response =
             await fetch(
@@ -793,23 +828,11 @@ export default async function handler(req, res) {
 
         catch (error) {
 
-            console.error(
-                "BOKKARA GOOGLE INVALID JSON:",
-                text
-            );
-
-
             throw new Error(
                 "Google Places returned invalid JSON."
             );
 
         }
-
-
-        console.log(
-            "BOKKARA GOOGLE STATUS:",
-            response.status
-        );
 
 
         if (!response.ok) {
@@ -865,6 +888,7 @@ export default async function handler(req, res) {
 
         const url =
             DETAILS_BASE_URL +
+            "places/" +
             encodeURIComponent(
                 cleanId
             );
@@ -949,13 +973,111 @@ export default async function handler(req, res) {
         }
 
 
+        console.log(
+            "BOKKARA DETAILS PHOTO COUNT:",
+            Array.isArray(data.photos)
+                ? data.photos.length
+                : 0
+        );
+
+
+        console.log(
+            "BOKKARA DETAILS REVIEW COUNT:",
+            Array.isArray(data.reviews)
+                ? data.reviews.length
+                : 0
+        );
+
+
         return data;
 
     }
 
 
     /* =====================================================
-       PHOTO PROXY BASE URL
+       EXTRACT PLACE ID
+    ====================================================== */
+
+    function extractPlaceId(
+        resourceName
+    ) {
+
+        if (
+            typeof resourceName !== "string"
+        ) {
+
+            return "";
+
+        }
+
+
+        if (
+            resourceName.startsWith(
+                "places/"
+            )
+        ) {
+
+            return resourceName.substring(
+                7
+            );
+
+        }
+
+
+        return resourceName;
+
+    }
+
+
+    /* =====================================================
+       GET PLACE ID
+    ====================================================== */
+
+    function getPlaceId(
+        place
+    ) {
+
+        if (!place) {
+
+            return "";
+
+        }
+
+
+        if (
+            typeof place.id === "string" &&
+            place.id.trim()
+        ) {
+
+            return place.id.trim();
+
+        }
+
+
+        if (
+            typeof place.name === "string"
+        ) {
+
+            return extractPlaceId(
+                place.name
+            );
+
+        }
+
+
+        return "";
+
+    }
+
+
+    /* =====================================================
+       PHOTO PROXY URL
+       
+       IMPORTANT:
+       
+       Every photo points to THIS SAME BACKEND.
+       
+       /api/places/search?name=...&photo=1
     ====================================================== */
 
     function createPhotoUrl(
@@ -976,13 +1098,15 @@ export default async function handler(req, res) {
 
         return (
 
-            "https://api-places-search-js.vercel.app/api/places/photo" +
+            "https://api-places-search-js.vercel.app/api/places/search" +
 
             "?name=" +
 
             encodeURIComponent(
-                photoName
+                photoName.trim()
             ) +
+
+            "&photo=1" +
 
             "&width=" +
 
@@ -1004,9 +1128,13 @@ export default async function handler(req, res) {
     /* =====================================================
        ENRICH PHOTOS
        
-       PRESERVES EVERY GOOGLE PHOTO.
+       PRESERVES EVERY GOOGLE PHOTO OBJECT.
        
-       Google can return up to 10 photos.
+       Every photo gets:
+       
+       photoUrl
+       thumbnailUrl
+       largeUrl
     ====================================================== */
 
     function enrichPhotos(
@@ -1022,14 +1150,7 @@ export default async function handler(req, res) {
         }
 
 
-        console.log(
-            "BOKKARA PHOTOS RECEIVED:",
-            photos.length
-        );
-
-
         return photos
-
             .map(
                 (
                     photo,
@@ -1049,94 +1170,44 @@ export default async function handler(req, res) {
                             : "";
 
 
-                    if (!photoName) {
-
-                        return {
-
-                            ...photo,
-
-                            index,
-
-                            photoUrl:
-                                "",
-
-                            thumbnailUrl:
-                                "",
-
-                            largeUrl:
-                                "",
-
-                            mediaUrl:
-                                ""
-
-                        };
-
-                    }
-
-
                     const photoUrl =
-                        createPhotoUrl(
-                            photoName,
-                            1600,
-                            1600
-                        );
+                        photoName
+                            ? createPhotoUrl(
+                                photoName,
+                                1600,
+                                1600
+                            )
+                            : "";
 
 
                     const thumbnailUrl =
-                        createPhotoUrl(
-                            photoName,
-                            600,
-                            600
-                        );
+                        photoName
+                            ? createPhotoUrl(
+                                photoName,
+                                600,
+                                600
+                            )
+                            : "";
 
 
                     const largeUrl =
-                        createPhotoUrl(
-                            photoName,
-                            2400,
-                            2400
-                        );
-
-
-                    const mediaUrl =
-                        createPhotoUrl(
-                            photoName,
-                            4800,
-                            4800
-                        );
+                        photoName
+                            ? createPhotoUrl(
+                                photoName,
+                                2400,
+                                2400
+                            )
+                            : "";
 
 
                     return {
 
-                        /* =================================
-                           ORIGINAL GOOGLE PHOTO
-                        ================================== */
-
                         ...photo,
-
-
-                        /* =================================
-                           OUR INDEX
-                        ================================== */
 
                         index,
 
-
-                        /* =================================
-                           GOOGLE RESOURCE NAME
-                        ================================== */
-
                         name:
                             photoName,
-
-
-                        resourceName:
-                            photoName,
-
-
-                        /* =================================
-                           WORKING IMAGE URLS
-                        ================================== */
 
                         photoUrl,
 
@@ -1144,57 +1215,13 @@ export default async function handler(req, res) {
 
                         largeUrl,
 
-                        mediaUrl,
-
-
-                        /* =================================
-                           DIMENSIONS
-                        ================================== */
-
-                        width:
-                            photo.widthPx ||
-                            null,
-
-                        height:
-                            photo.heightPx ||
-                            null,
-
-
-                        widthPx:
-                            photo.widthPx ||
-                            null,
-
-                        heightPx:
-                            photo.heightPx ||
-                            null,
-
-
-                        /* =================================
-                           ATTRIBUTIONS
-                        ================================== */
-
-                        authorAttributions:
-                            Array.isArray(
-                                photo.authorAttributions
-                            )
-                                ? photo.authorAttributions
-                                : [],
-
-
-                        googleMapsUri:
-                            photo.googleMapsUri ||
-                            null,
-
-
-                        flagContentUri:
-                            photo.flagContentUri ||
-                            null
+                        url:
+                            photoUrl
 
                     };
 
                 }
             )
-
             .filter(Boolean);
 
     }
@@ -1218,7 +1245,6 @@ export default async function handler(req, res) {
 
 
         return reviews
-
             .map(
                 (
                     review,
@@ -1295,7 +1321,6 @@ export default async function handler(req, res) {
 
                 }
             )
-
             .filter(Boolean);
 
     }
@@ -1347,14 +1372,9 @@ export default async function handler(req, res) {
             );
 
 
-        console.log(
-            "BOKKARA NORMALIZE:",
-            place.displayName?.text ||
-            "",
-            "PHOTO COUNT:",
-            photos.length
-        );
-
+        /* =============================================
+           RETURN COMPLETE OBJECT
+        ============================================== */
 
         return {
 
@@ -1449,7 +1469,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               PHOTOS
+               ALL PHOTOS
             ============================================== */
 
             photos,
@@ -1459,7 +1479,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               FIRST PHOTO CONVENIENCE
+               FIRST PHOTO SHORTCUTS
             ============================================== */
 
             photoUrl:
@@ -1473,39 +1493,6 @@ export default async function handler(req, res) {
             largePhotoUrl:
                 photos[0]?.largeUrl ||
                 "",
-
-
-            /* =============================================
-               ALL PHOTO URLS
-               
-               Convenient for frontend galleries.
-            ============================================== */
-
-            photoUrls:
-                photos
-                    .map(
-                        photo =>
-                            photo.photoUrl
-                    )
-                    .filter(Boolean),
-
-
-            thumbnailUrls:
-                photos
-                    .map(
-                        photo =>
-                            photo.thumbnailUrl
-                    )
-                    .filter(Boolean),
-
-
-            largePhotoUrls:
-                photos
-                    .map(
-                        photo =>
-                            photo.largeUrl
-                    )
-                    .filter(Boolean),
 
 
             /* =============================================
@@ -1602,7 +1589,7 @@ export default async function handler(req, res) {
 
 
             /* =============================================
-               COMPLETE GOOGLE OBJECT
+               COMPLETE ORIGINAL GOOGLE OBJECT
             ============================================== */
 
             google: {
@@ -1616,82 +1603,6 @@ export default async function handler(req, res) {
             }
 
         };
-
-    }
-
-
-    /* =====================================================
-       EXTRACT PLACE ID
-    ====================================================== */
-
-    function extractPlaceId(
-        resourceName
-    ) {
-
-        if (
-            typeof resourceName !== "string"
-        ) {
-
-            return "";
-
-        }
-
-
-        if (
-            resourceName.startsWith(
-                "places/"
-            )
-        ) {
-
-            return resourceName.substring(
-                7
-            );
-
-        }
-
-
-        return resourceName;
-
-    }
-
-
-    /* =====================================================
-       GET PLACE ID
-    ====================================================== */
-
-    function getPlaceId(
-        place
-    ) {
-
-        if (!place) {
-
-            return "";
-
-        }
-
-
-        if (
-            typeof place.id === "string" &&
-            place.id.trim()
-        ) {
-
-            return place.id.trim();
-
-        }
-
-
-        if (
-            typeof place.name === "string"
-        ) {
-
-            return extractPlaceId(
-                place.name
-            );
-
-        }
-
-
-        return "";
 
     }
 
@@ -1772,10 +1683,6 @@ export default async function handler(req, res) {
         }
 
 
-        /* =============================================
-           FALLBACK TO SEARCH RESULT
-        ============================================== */
-
         return normalizePlace(
             searchPlace
         );
@@ -1813,11 +1720,9 @@ export default async function handler(req, res) {
 
             const batchResults =
                 await Promise.all(
-
                     batch.map(
                         enrichOnePlace
                     )
-
                 );
 
 
@@ -1863,8 +1768,7 @@ export default async function handler(req, res) {
                     (
                         place.name ||
                         ""
-                    )
-                    +
+                    ) +
                     "|" +
                     (
                         place.address ||
@@ -2009,10 +1913,6 @@ export default async function handler(req, res) {
             };
 
 
-            /* =============================================
-               PAGE TOKEN
-            ============================================== */
-
             if (pageToken) {
 
                 body.pageToken =
@@ -2020,10 +1920,6 @@ export default async function handler(req, res) {
 
             }
 
-
-            /* =============================================
-               LOCATION BIAS
-            ============================================== */
 
             if (hasLocation) {
 
@@ -2051,10 +1947,6 @@ export default async function handler(req, res) {
             }
 
 
-            /* =============================================
-               GOOGLE TEXT SEARCH
-            ============================================== */
-
             const googleData =
                 await googlePost(
 
@@ -2080,33 +1972,6 @@ export default async function handler(req, res) {
                 searchPlaces.length
             );
 
-
-            /* =============================================
-               LOG PHOTO COUNTS BEFORE DETAILS
-            ============================================== */
-
-            searchPlaces.forEach(
-                (p, index) => {
-
-                    console.log(
-                        "SEARCH PLACE",
-                        index,
-                        p.displayName?.text,
-                        "PHOTOS:",
-                        Array.isArray(
-                            p.photos
-                        )
-                            ? p.photos.length
-                            : 0
-                    );
-
-                }
-            );
-
-
-            /* =============================================
-               FULL DETAILS
-            ============================================== */
 
             const enriched =
                 await enrichPlaces(
@@ -2160,14 +2025,11 @@ export default async function handler(req, res) {
                         }
                         : null,
 
-
                 nextPageToken:
                     googleData.nextPageToken ||
                     null,
 
-
                 places,
-
 
                 google:
                     googleData
@@ -2179,19 +2041,8 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-                "================================================="
-            );
-
-            console.error(
-                "BOKKARA TEXT SEARCH FAILED"
-            );
-
-            console.error(
+                "BOKKARA TEXT SEARCH FAILED:",
                 error
-            );
-
-            console.error(
-                "================================================="
             );
 
 
@@ -2257,7 +2108,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       RUN NEARBY SEARCH FOR EACH TYPE
+       NEARBY SEARCH FOR EACH TYPE
     ====================================================== */
 
     for (
@@ -2342,25 +2193,6 @@ export default async function handler(req, res) {
             );
 
 
-            found.forEach(
-                (p, index) => {
-
-                    console.log(
-                        "NEARBY PLACE",
-                        index,
-                        p.displayName?.text,
-                        "PHOTOS:",
-                        Array.isArray(
-                            p.photos
-                        )
-                            ? p.photos.length
-                            : 0
-                    );
-
-                }
-            );
-
-
             allSearchPlaces.push(
                 ...found
             );
@@ -2370,13 +2202,9 @@ export default async function handler(req, res) {
         catch (error) {
 
             console.error(
-
                 "BOKKARA NEARBY SEARCH FAILED:",
-
                 type,
-
                 error.message
-
             );
 
         }
@@ -2455,7 +2283,7 @@ export default async function handler(req, res) {
 
 
     /* =====================================================
-       RETURN CATEGORY RESULTS
+       CATEGORY RESPONSE
     ====================================================== */
 
     return res.status(200).json({
